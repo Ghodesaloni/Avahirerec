@@ -13,6 +13,7 @@ const usersRoutes = require("./usersRoutes");
 const candidatePortalRoutes = require("./candidatePortalRoutes");
 const livekitRoutes = require("./livekitRoutes");
 const reportsRoutes = require("./reportsRoutes");
+const notificationsRoutes = require("./notificationsRoutes");
 
 router.use("/auth", authRoutes);
 router.use("/users", usersRoutes);
@@ -21,6 +22,7 @@ router.use("/resumes", resumesRoutes);
 router.use("/interviews", interviewsRoutes);
 router.use("/candidates", candidatesRoutes);
 router.use("/candidate-portal", candidatePortalRoutes);
+router.use("/notifications", notificationsRoutes);
 router.use("/livekit", livekitRoutes);
 router.use("/token", livekitRoutes);
 router.use("/reports", reportsRoutes);

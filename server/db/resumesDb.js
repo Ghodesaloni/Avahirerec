@@ -4,14 +4,20 @@ const { classifyCandidateDomain, ALL_DOMAINS } = require("../services/domainClas
 
 const COLLECTION = "resumes";
 
-function matchesUser(item, targetEmail) {
-  if (!targetEmail) return false;
-  const target = targetEmail.toLowerCase().trim();
-  const createdBy = (item.createdBy || "").toLowerCase().trim();
-  const userEmail = (item.userEmail || "").toLowerCase().trim();
+function matchesUser(item, userRef) {
+  if (!userRef) return false;
+  const targetId = typeof userRef === "object" ? userRef.id : null;
+  const targetEmail = (typeof userRef === "object" ? (userRef.email || "") : String(userRef)).toLowerCase().trim();
 
-  // Strict email isolation: only return resumes belonging to this specific email login
-  return createdBy === target || userEmail === target;
+  const itemUserId = item.user_id !== undefined ? Number(item.user_id) : (item.userId !== undefined ? Number(item.userId) : null);
+  if (targetId && itemUserId && itemUserId === Number(targetId)) return true;
+
+  if (targetEmail) {
+    const createdBy = (item.createdBy || "").toLowerCase().trim();
+    const userEmail = (item.userEmail || "").toLowerCase().trim();
+    return createdBy === targetEmail || userEmail === targetEmail;
+  }
+  return false;
 }
 
 class ResumesDatabase {
@@ -50,6 +56,8 @@ class ResumesDatabase {
       rawText: row.raw_text,
       resumeFileName: row.resume_file_name,
       fileUrl: row.file_url,
+      userId: row.user_id,
+      user_id: row.user_id,
       createdBy: row.created_by,
       userEmail: row.user_email || row.created_by,
       createdAt: row.created_at,
@@ -124,7 +132,16 @@ class ResumesDatabase {
       const params = [];
       const conditions = [];
 
-      if (filters.userEmail) {
+      if (filters.userId && filters.userEmail) {
+        params.push(filters.userId);
+        const p1 = params.length;
+        params.push(filters.userEmail.toLowerCase().trim());
+        const p2 = params.length;
+        conditions.push(`(user_id = $${p1} OR LOWER(created_by) = $${p2} OR LOWER(user_email) = $${p2})`);
+      } else if (filters.userId) {
+        params.push(filters.userId);
+        conditions.push(`user_id = $${params.length}`);
+      } else if (filters.userEmail) {
         const emailLower = filters.userEmail.toLowerCase().trim();
         params.push(emailLower);
         conditions.push(`(LOWER(created_by) = $${params.length} OR LOWER(user_email) = $${params.length})`);
@@ -183,8 +200,8 @@ class ResumesDatabase {
     let list = readData(COLLECTION, []);
     list = list.map(c => this.ensureFields(c));
 
-    if (filters.userEmail) {
-      list = list.filter(r => matchesUser(r, filters.userEmail));
+    if (filters.userId || filters.userEmail) {
+      list = list.filter(r => matchesUser(r, { id: filters.userId, email: filters.userEmail }));
     }
 
     if (filters.field && filters.field !== "All" && filters.field !== "All Fields") {
@@ -326,6 +343,7 @@ class ResumesDatabase {
     const field = resumeData.field || resumeData.domain || this.classifyDomain({ ...resumeData, allSkills });
 
     const authorEmail = (resumeData.createdBy || resumeData.userEmail || "").trim();
+    const authorId = resumeData.userId || resumeData.user_id || null;
 
     const newCandidate = {
       id,
@@ -338,6 +356,8 @@ class ResumesDatabase {
       field,
       domain: field,
       secondaryDomains: resumeData.secondaryDomains || resumeData.secondary_domains || [],
+      userId: authorId,
+      user_id: authorId,
       createdBy: authorEmail,
       userEmail: authorEmail,
       experience: resumeData.experience || "0 Years",
@@ -385,10 +405,10 @@ class ResumesDatabase {
           target_job_title, field, domain, score, status, skills,
           matched_skills, missing_skills, experience, exp_years,
           education, summary, key_points, raw_text, resume_file_name,
-          created_by, user_email, created_at, updated_at
+          created_by, user_email, user_id, created_at, updated_at
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-          $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, NOW(), NOW()
+          $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, NOW(), NOW()
         )
         ON CONFLICT (id) DO UPDATE SET
           name = EXCLUDED.name,
@@ -412,6 +432,7 @@ class ResumesDatabase {
           resume_file_name = EXCLUDED.resume_file_name,
           created_by = COALESCE(EXCLUDED.created_by, public.resumes.created_by),
           user_email = COALESCE(EXCLUDED.user_email, public.resumes.user_email),
+          user_id = COALESCE(EXCLUDED.user_id, public.resumes.user_id),
           updated_at = NOW();
       `, [
         newCandidate.id, newCandidate.id, newCandidate.name, newCandidate.email,
@@ -428,7 +449,8 @@ class ResumesDatabase {
         newCandidate.rawText,
         newCandidate.resumeFileName,
         newCandidate.createdBy || null,
-        newCandidate.userEmail || null
+        newCandidate.userEmail || null,
+        newCandidate.userId || null
       ]).catch(err => console.warn("PostgreSQL resume insert warning:", err.message));
     } catch (e) {}
 
@@ -444,6 +466,8 @@ class ResumesDatabase {
         score: newCandidate.atsScore || newCandidate.matchScore || 0,
         status: newCandidate.status === "Shortlisted" ? "Shortlisted" : "Under Review",
         notes: newCandidate.summary,
+        userId: newCandidate.userId,
+        user_id: newCandidate.user_id,
         createdBy: newCandidate.createdBy,
         userEmail: newCandidate.userEmail
       }).catch(() => {});

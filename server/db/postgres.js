@@ -376,6 +376,41 @@ async function initTables() {
         );
       `);
 
+      // Ensure 2FA, backup codes, preferences, settings and extended profile columns exist in public.users
+      await client.query(`
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN DEFAULT FALSE;
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS two_factor_secret VARCHAR(255);
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS backup_codes JSONB;
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS preferences JSONB;
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS interview_settings JSONB;
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS avatar TEXT;
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS location VARCHAR(255);
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS department VARCHAR(255);
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS bio TEXT;
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS dob VARCHAR(100);
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS gender VARCHAR(50);
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS linkedin VARCHAR(255);
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS company_size VARCHAR(100);
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS industry VARCHAR(100);
+      `);
+
+      // 1b. User Active Sessions table
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS public.user_sessions (
+          id VARCHAR(100) PRIMARY KEY,
+          user_email VARCHAR(255) NOT NULL,
+          device VARCHAR(255),
+          location VARCHAR(255),
+          ip_address VARCHAR(100),
+          user_agent TEXT,
+          last_active VARCHAR(100),
+          is_current BOOLEAN DEFAULT TRUE,
+          is_revoked BOOLEAN DEFAULT FALSE,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+
       // 2. Verification tokens table
       await client.query(`
         CREATE TABLE IF NOT EXISTS public.verification_tokens (
@@ -646,6 +681,29 @@ async function initTables() {
         ALTER TABLE public.candidates ADD COLUMN IF NOT EXISTS termination_reason TEXT;
       `);
 
+      // 14. Active Authenticated User Sessions table
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS public.user_sessions (
+          id VARCHAR(255) PRIMARY KEY,
+          user_email VARCHAR(255) NOT NULL,
+          session_token_hash VARCHAR(255),
+          device VARCHAR(255),
+          location VARCHAR(255),
+          ip_address VARCHAR(100),
+          user_agent TEXT,
+          last_active TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          is_current BOOLEAN DEFAULT FALSE,
+          is_revoked BOOLEAN DEFAULT FALSE,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN DEFAULT FALSE;
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT;
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS backup_codes JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS preferences JSONB DEFAULT '{}'::jsonb;
+        ALTER TABLE public.users ADD COLUMN IF NOT EXISTS interview_settings JSONB DEFAULT '{}'::jsonb;
+      `);
+
       // Create indexes for faster token, email, job, candidate, and interview lookups
       await client.query(`
         CREATE INDEX IF NOT EXISTS idx_verification_tokens_token ON public.verification_tokens(token);
@@ -665,6 +723,59 @@ async function initTables() {
         CREATE INDEX IF NOT EXISTS idx_email_sent_user_email ON public.email_sent(user_email);
         CREATE INDEX IF NOT EXISTS idx_proctoring_link_code ON public.proctoring_violations(link_code);
         CREATE INDEX IF NOT EXISTS idx_proctoring_candidate_email ON public.proctoring_violations(candidate_email);
+      `);
+
+      // 15. Notifications table
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS public.notifications (
+          id VARCHAR(255) PRIMARY KEY,
+          user_email VARCHAR(255) NOT NULL,
+          title VARCHAR(255) NOT NULL,
+          message TEXT NOT NULL,
+          type VARCHAR(100) DEFAULT 'general',
+          category VARCHAR(100) DEFAULT 'system',
+          event_key VARCHAR(255),
+          link VARCHAR(255),
+          unread BOOLEAN DEFAULT TRUE,
+          icon VARCHAR(100),
+          icon_bg VARCHAR(100),
+          metadata JSONB DEFAULT '{}'::jsonb,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_notifications_user_email ON public.notifications(user_email);
+        CREATE INDEX IF NOT EXISTS idx_notifications_unread ON public.notifications(unread);
+        CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON public.notifications(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_notifications_event_key ON public.notifications(event_key);
+      `);
+
+      // 16. Account-wise data isolation: user_id foreign keys, indexes, and safe backfill
+      await client.query(`
+        ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS user_id INTEGER;
+        ALTER TABLE public.candidates ADD COLUMN IF NOT EXISTS user_id INTEGER;
+        ALTER TABLE public.interviews ADD COLUMN IF NOT EXISTS user_id INTEGER;
+        ALTER TABLE public.resumes ADD COLUMN IF NOT EXISTS user_id INTEGER;
+        ALTER TABLE public.notifications ADD COLUMN IF NOT EXISTS user_id INTEGER;
+        ALTER TABLE public.smtp_emails ADD COLUMN IF NOT EXISTS user_id INTEGER;
+        ALTER TABLE public.email_sent ADD COLUMN IF NOT EXISTS user_id INTEGER;
+        ALTER TABLE public.user_sessions ADD COLUMN IF NOT EXISTS user_id INTEGER;
+
+        CREATE INDEX IF NOT EXISTS idx_jobs_user_id ON public.jobs(user_id);
+        CREATE INDEX IF NOT EXISTS idx_candidates_user_id ON public.candidates(user_id);
+        CREATE INDEX IF NOT EXISTS idx_interviews_user_id ON public.interviews(user_id);
+        CREATE INDEX IF NOT EXISTS idx_resumes_user_id ON public.resumes(user_id);
+        CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON public.notifications(user_id);
+        CREATE INDEX IF NOT EXISTS idx_smtp_emails_user_id ON public.smtp_emails(user_id);
+        CREATE INDEX IF NOT EXISTS idx_email_sent_user_id ON public.email_sent(user_id);
+
+        -- Safe verified backfill of existing legacy records without guessing or arbitrary defaults
+        UPDATE public.jobs j SET user_id = u.id FROM public.users u WHERE j.user_id IS NULL AND (LOWER(j.user_email) = LOWER(u.email) OR LOWER(j.created_by) = LOWER(u.email));
+        UPDATE public.candidates c SET user_id = u.id FROM public.users u WHERE c.user_id IS NULL AND (LOWER(c.user_email) = LOWER(u.email) OR LOWER(c.created_by) = LOWER(u.email));
+        UPDATE public.interviews i SET user_id = u.id FROM public.users u WHERE i.user_id IS NULL AND (LOWER(i.user_email) = LOWER(u.email) OR LOWER(i.created_by) = LOWER(u.email));
+        UPDATE public.resumes r SET user_id = u.id FROM public.users u WHERE r.user_id IS NULL AND (LOWER(r.user_email) = LOWER(u.email) OR LOWER(r.created_by) = LOWER(u.email));
+        UPDATE public.notifications n SET user_id = u.id FROM public.users u WHERE n.user_id IS NULL AND LOWER(n.user_email) = LOWER(u.email);
+        UPDATE public.smtp_emails s SET user_id = u.id FROM public.users u WHERE s.user_id IS NULL AND LOWER(s.user_email) = LOWER(u.email);
+        UPDATE public.email_sent e SET user_id = u.id FROM public.users u WHERE e.user_id IS NULL AND LOWER(e.user_email) = LOWER(u.email);
       `);
 
       // Sync any registered mirror users to PostgreSQL public.users
@@ -1138,7 +1249,7 @@ async function getUserByEmail(email) {
     const p = getPool();
     if (p) {
       const res = await p.query(
-        `SELECT id, email, full_name, password_hash, company, website, designation, phone, is_verified, created_at FROM public.users WHERE LOWER(email) = $1 LIMIT 1`,
+        `SELECT id, email, full_name, password_hash, company, website, designation, phone, is_verified, avatar, location, department, bio, dob, gender, linkedin, company_size, industry, created_at FROM public.users WHERE LOWER(email) = $1 LIMIT 1`,
         [cleanEmail]
       );
       if (res.rows && res.rows[0]) {
@@ -1149,13 +1260,26 @@ async function getUserByEmail(email) {
           email: row.email,
           fullName: row.full_name,
           name: row.full_name,
-          company: row.company,
-          website: row.website,
-          designation: row.designation,
-          phone: row.phone,
+          company: row.company || "",
+          companyName: row.company || "",
+          website: row.website || "",
+          companyWebsite: row.website || "",
+          designation: row.designation || "",
+          jobTitle: row.designation || "",
+          phone: row.phone || "",
           password_hash: row.password_hash,
           passwordHash: row.password_hash,
           isVerified: row.is_verified,
+          avatar: row.avatar || "",
+          location: row.location || "",
+          department: row.department || "Human Resources",
+          bio: row.bio || "",
+          dob: row.dob || "",
+          displayDob: row.dob || "",
+          gender: row.gender || "",
+          linkedin: row.linkedin || "",
+          companySize: row.company_size || "",
+          industry: row.industry || "",
           createdAt: row.created_at,
         };
       }
@@ -1174,12 +1298,25 @@ async function getUserByEmail(email) {
       fullName: found.fullName || found.name || "",
       name: found.fullName || found.name || "",
       company: found.company || "",
+      companyName: found.company || "",
       website: found.website || "",
+      companyWebsite: found.website || "",
       designation: found.designation || "",
+      jobTitle: found.designation || "",
       phone: found.phone || "",
       password_hash: found.passwordHash || found.password_hash || null,
       passwordHash: found.passwordHash || found.password_hash || null,
       isVerified: Boolean(found.isVerified),
+      avatar: found.avatar || "",
+      location: found.location || "",
+      department: found.department || "Human Resources",
+      bio: found.bio || "",
+      dob: found.dob || "",
+      displayDob: found.dob || "",
+      gender: found.gender || "",
+      linkedin: found.linkedin || "",
+      companySize: found.companySize || found.company_size || "",
+      industry: found.industry || "",
       createdAt: found.createdAt,
     };
   }
@@ -1196,15 +1333,164 @@ async function getUserByEmail(email) {
       fullName: fallbackFound.name,
       name: fallbackFound.name,
       company: fallbackFound.company || "AvaHire",
-      website: "",
+      companyName: fallbackFound.company || "AvaHire",
+      website: fallbackFound.website || "",
+      companyWebsite: fallbackFound.website || "",
       designation: fallbackFound.designation || "HR Administrator",
+      jobTitle: fallbackFound.designation || "HR Administrator",
       phone: fallbackFound.phone || "+91 98000 00000",
       password_hash: fallbackFound.password_hash || "password123",
       passwordHash: fallbackFound.password_hash || "password123",
       isVerified: true,
+      avatar: fallbackFound.avatar || "",
+      location: fallbackFound.location || "",
+      department: fallbackFound.department || "Human Resources",
+      bio: fallbackFound.bio || "",
+      dob: fallbackFound.dob || "",
+      displayDob: fallbackFound.dob || "",
+      gender: fallbackFound.gender || "",
+      linkedin: fallbackFound.linkedin || "",
+      companySize: fallbackFound.companySize || fallbackFound.company_size || "",
+      industry: fallbackFound.industry || "",
       createdAt: fallbackFound.created_at,
     };
   }
+
+  return null;
+}
+
+// Update complete HR user profile across PostgreSQL and local mirror
+async function updateUserProfile(email, profileData) {
+  if (!email) return null;
+  const cleanEmail = email.trim().toLowerCase();
+
+  const fullName = profileData.fullName || profileData.name || "";
+  const phone = profileData.phone || "";
+  const designation = profileData.jobTitle || profileData.designation || "";
+  const company = profileData.companyName || profileData.company || "";
+  const website = profileData.companyWebsite || profileData.website || "";
+  const companySize = profileData.companySize || profileData.company_size || "";
+  const industry = profileData.industry || "";
+  const location = profileData.location || "";
+  const department = profileData.department || "";
+  const bio = profileData.bio || "";
+  const dob = profileData.displayDob || profileData.dob || "";
+  const gender = profileData.gender || "";
+  const linkedin = profileData.linkedin || "";
+  const avatar = profileData.avatar !== undefined ? profileData.avatar : null;
+
+  // 1. Update mirror file
+  const usersList = readJson(USERS_FILE);
+  const uIdx = usersList.findIndex((u) => u.email && u.email.toLowerCase() === cleanEmail);
+  if (uIdx >= 0) {
+    usersList[uIdx] = {
+      ...usersList[uIdx],
+      fullName: fullName || usersList[uIdx].fullName,
+      phone: phone !== undefined ? phone : usersList[uIdx].phone,
+      designation: designation || usersList[uIdx].designation,
+      company: company || usersList[uIdx].company,
+      website: website || usersList[uIdx].website,
+      companySize: companySize || usersList[uIdx].companySize,
+      industry: industry || usersList[uIdx].industry,
+      location: location || usersList[uIdx].location,
+      department: department || usersList[uIdx].department,
+      bio: bio !== undefined ? bio : usersList[uIdx].bio,
+      dob: dob || usersList[uIdx].dob,
+      gender: gender || usersList[uIdx].gender,
+      linkedin: linkedin || usersList[uIdx].linkedin,
+      avatar: avatar !== null ? avatar : usersList[uIdx].avatar,
+      updatedAt: new Date().toISOString()
+    };
+    writeJson(USERS_FILE, usersList);
+  }
+
+  // 2. Update server/data/users.json
+  const defaultUsersFile = path.join(DATA_DIR, "users.json");
+  const dUsers = readJson(defaultUsersFile);
+  const dIdx = dUsers.findIndex((u) => u.email && u.email.toLowerCase() === cleanEmail);
+  if (dIdx >= 0) {
+    dUsers[dIdx] = {
+      ...dUsers[dIdx],
+      name: fullName || dUsers[dIdx].name,
+      phone: phone !== undefined ? phone : dUsers[dIdx].phone,
+      designation: designation || dUsers[dIdx].designation,
+      company: company || dUsers[dIdx].company,
+      website: website || dUsers[dIdx].website,
+      companySize: companySize || dUsers[dIdx].companySize,
+      industry: industry || dUsers[dIdx].industry,
+      location: location || dUsers[dIdx].location,
+      department: department || dUsers[dIdx].department,
+      bio: bio !== undefined ? bio : dUsers[dIdx].bio,
+      dob: dob || dUsers[dIdx].dob,
+      gender: gender || dUsers[dIdx].gender,
+      linkedin: linkedin || dUsers[dIdx].linkedin,
+      avatar: avatar !== null ? avatar : dUsers[dIdx].avatar,
+    };
+    writeJson(defaultUsersFile, dUsers);
+  }
+
+  // 3. Update PostgreSQL
+  try {
+    const p = getPool();
+    if (p) {
+      const upd = await p.query(
+        `UPDATE public.users SET
+          full_name = COALESCE(NULLIF($1, ''), full_name),
+          phone = COALESCE(NULLIF($2, ''), phone),
+          designation = COALESCE(NULLIF($3, ''), designation),
+          company = COALESCE(NULLIF($4, ''), company),
+          website = COALESCE(NULLIF($5, ''), website),
+          company_size = COALESCE(NULLIF($6, ''), company_size),
+          industry = COALESCE(NULLIF($7, ''), industry),
+          location = COALESCE(NULLIF($8, ''), location),
+          department = COALESCE(NULLIF($9, ''), department),
+          bio = COALESCE($10, bio),
+          dob = COALESCE(NULLIF($11, ''), dob),
+          gender = COALESCE(NULLIF($12, ''), gender),
+          linkedin = COALESCE(NULLIF($13, ''), linkedin),
+          avatar = CASE WHEN $14 IS NOT NULL THEN $14 ELSE avatar END,
+          updated_at = NOW()
+        WHERE LOWER(email) = $15`,
+        [
+          fullName, phone, designation, company, website,
+          companySize, industry, location, department, bio,
+          dob, gender, linkedin, avatar, cleanEmail
+        ]
+      );
+
+      if (upd && upd.rowCount === 0) {
+        await p.query(
+          `INSERT INTO public.users (email, full_name, phone, designation, company, website, company_size, industry, location, department, bio, dob, gender, linkedin, avatar, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+           ON CONFLICT (email) DO UPDATE SET
+            full_name = EXCLUDED.full_name,
+            phone = EXCLUDED.phone,
+            designation = EXCLUDED.designation,
+            company = EXCLUDED.company,
+            website = EXCLUDED.website,
+            company_size = EXCLUDED.company_size,
+            industry = EXCLUDED.industry,
+            location = EXCLUDED.location,
+            department = EXCLUDED.department,
+            bio = EXCLUDED.bio,
+            dob = EXCLUDED.dob,
+            gender = EXCLUDED.gender,
+            linkedin = EXCLUDED.linkedin,
+            avatar = EXCLUDED.avatar,
+            updated_at = NOW()`,
+          [
+            cleanEmail, fullName || "HR Administrator", phone || "", designation || "HR Manager", company || "AvaHire", website || "",
+            companySize || "", industry || "", location || "", department || "Human Resources", bio || "",
+            dob || "", gender || "", linkedin || "", avatar || ""
+          ]
+        );
+      }
+    }
+  } catch (err) {
+    console.warn("PostgreSQL updateUserProfile error:", err.message);
+  }
+
+  return await getUserByEmail(cleanEmail);
 
   return null;
 }
@@ -1380,5 +1666,6 @@ module.exports = {
   getAllUsers,
   saveSmtpEmail,
   getSmtpEmails,
+  updateUserProfile,
   query,
 };

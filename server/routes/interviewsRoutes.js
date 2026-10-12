@@ -1,7 +1,9 @@
 const express = require("express");
 const router = express.Router();
 const interviewsDb = require("../db/interviewsDb");
+const settingsDb = require("../db/settingsDb");
 const automatedEmailService = require("../services/automatedEmailService");
+const { requireAuth, optionalAuth } = require("../middleware/authMiddleware");
 
 function parseDateTime(dateStr, timeStr) {
   if (!dateStr) return null;
@@ -52,7 +54,10 @@ async function checkAndEnforceExpiry(interview) {
   }
   const parsed = parseDateTime(interview.date, interview.time);
   if (parsed && !isNaN(parsed.getTime())) {
-    const joinDeadline = new Date(parsed.getTime() + 5 * 60 * 1000);
+    const ivSettings = settingsDb.getInterviewSettings(interview.userEmail || interview.createdBy);
+    const graceMatch = String(ivSettings?.graceTime || "2").match(/(\d+)/);
+    const graceMins = graceMatch ? parseInt(graceMatch[1], 10) : 2;
+    const joinDeadline = new Date(parsed.getTime() + graceMins * 60 * 1000);
     if (new Date() > joinDeadline) {
       interview.isExpired = true;
       interview.status = "Expired";
@@ -62,12 +67,17 @@ async function checkAndEnforceExpiry(interview) {
   return interview;
 }
 
-// GET /api/interviews - list interviews
-router.get("/", async (req, res) => {
+// GET /api/interviews - list interviews strictly scoped to authenticated recruiter
+router.get("/", requireAuth, async (req, res) => {
   try {
-    const { status, search, userEmail } = req.query;
-    const authorEmail = userEmail || req.headers["x-user-email"];
-    const list = await interviewsDb.getAll({ status, search, userEmail: authorEmail });
+    const { status, search } = req.query;
+    const list = await interviewsDb.getAll({
+      status,
+      search,
+      user: req.user,
+      userId: req.user.id,
+      userEmail: req.user.email
+    });
     const processedList = await Promise.all(list.map(checkAndEnforceExpiry));
     res.json({ success: true, count: processedList.length, data: processedList });
   } catch (err) {
@@ -75,7 +85,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-// GET /api/interviews/code/:linkCode - get by linkCode (used by candidate portal)
+// GET /api/interviews/code/:linkCode - get by linkCode (used by candidate portal to enter their scheduled interview)
 router.get("/code/:linkCode", async (req, res) => {
   try {
     let interview = await interviewsDb.getByLinkCode(req.params.linkCode);
@@ -89,12 +99,12 @@ router.get("/code/:linkCode", async (req, res) => {
   }
 });
 
-// GET /api/interviews/:id - get single interview
-router.get("/:id", async (req, res) => {
+// GET /api/interviews/:id - get single interview (with IDOR protection)
+router.get("/:id", requireAuth, async (req, res) => {
   try {
-    let interview = (await interviewsDb.getById(req.params.id)) || (await interviewsDb.getByLinkCode(req.params.id));
+    let interview = await interviewsDb.getById(req.params.id, req.user);
     if (!interview) {
-      return res.status(404).json({ success: false, error: "Interview not found" });
+      return res.status(404).json({ success: false, error: "Interview not found or access denied" });
     }
     interview = await checkAndEnforceExpiry(interview);
     res.json({ success: true, data: interview });
@@ -103,20 +113,31 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// POST /api/interviews - schedule new interview
-router.post("/", async (req, res) => {
+// POST /api/interviews - schedule new interview bound to authenticated account
+router.post("/", requireAuth, async (req, res) => {
   try {
-    const authorEmail = req.body.createdBy || req.body.userEmail || req.headers["x-user-email"] || "";
     const newInterview = await interviewsDb.create({
       ...req.body,
-      createdBy: authorEmail,
-      userEmail: authorEmail
+      userId: req.user.id,
+      createdBy: req.user.email,
+      userEmail: req.user.email
     });
 
-    // Automated Email Trigger: Interview Scheduled (Link generated)
+    // Automated Email Trigger: Interview Scheduled
     automatedEmailService.sendInterviewScheduledEmail({ interview: newInterview, req }).catch(err => {
       console.warn("[AUTOMATED-EMAIL] Interview scheduled email notice:", err.message);
     });
+
+    // In-app Notification Trigger
+    const notificationService = require("../services/notificationService");
+    notificationService.notifyInterviewScheduled({
+      userEmail: req.user.email,
+      candidateName: newInterview.name,
+      role: newInterview.role,
+      date: newInterview.date,
+      time: newInterview.time,
+      interviewId: newInterview.id
+    }).catch(e => console.warn("Notification error:", e.message));
 
     res.status(201).json({ success: true, data: newInterview, message: "Interview scheduled successfully" });
   } catch (err) {
@@ -124,12 +145,12 @@ router.post("/", async (req, res) => {
   }
 });
 
-// PUT /api/interviews/:id - update interview
-router.put("/:id", async (req, res) => {
+// PUT /api/interviews/:id - update interview (only permitted for owner)
+router.put("/:id", requireAuth, async (req, res) => {
   try {
-    const updated = await interviewsDb.update(req.params.id, req.body);
+    const updated = await interviewsDb.update(req.params.id, req.body, req.user);
     if (!updated) {
-      return res.status(404).json({ success: false, error: "Interview not found" });
+      return res.status(404).json({ success: false, error: "Interview not found or unauthorized to update" });
     }
     res.json({ success: true, data: updated, message: "Interview updated successfully" });
   } catch (err) {
@@ -137,12 +158,12 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// DELETE /api/interviews/:id - delete/cancel interview
-router.delete("/:id", async (req, res) => {
+// DELETE /api/interviews/:id - delete/cancel interview (only permitted for owner)
+router.delete("/:id", requireAuth, async (req, res) => {
   try {
-    const deleted = await interviewsDb.delete(req.params.id);
+    const deleted = await interviewsDb.delete(req.params.id, req.user);
     if (!deleted) {
-      return res.status(404).json({ success: false, error: "Interview not found" });
+      return res.status(404).json({ success: false, error: "Interview not found or unauthorized to delete" });
     }
     res.json({ success: true, message: "Interview cancelled successfully" });
   } catch (err) {

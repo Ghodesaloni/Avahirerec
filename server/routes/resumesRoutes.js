@@ -9,6 +9,7 @@ const { analyzeResumeAgainstJd } = require("../services/resumeAnalysisService");
 const { parseResume } = require("../services/resumeParserService");
 const { ALL_DOMAINS } = require("../services/domainClassifier");
 const automatedEmailService = require("../services/automatedEmailService");
+const { requireAuth, isResourceOwnedBy } = require("../middleware/authMiddleware");
 
 const ALLOWED_RESUME_EXTENSIONS = [".pdf", ".docx", ".doc", ".txt", ".rtf"];
 const ALLOWED_RESUME_MIMES = [
@@ -64,11 +65,14 @@ const handleMultipleUpload = (req, res, next) => {
   });
 };
 
-// Helper to resolve target job from request
-function resolveJob(jobId, customJdBody) {
+// Helper to resolve target job from request, ensuring account authorization
+function resolveJob(jobId, customJdBody, user) {
   let job = null;
   if (jobId && jobId !== "custom" && jobId !== "all") {
-    job = jobsDb.getById(jobId);
+    const candidateJob = jobsDb.getById(jobId);
+    if (candidateJob && (!user || isResourceOwnedBy(candidateJob, user))) {
+      job = candidateJob;
+    }
   }
   if (!job && customJdBody) {
     try {
@@ -89,7 +93,8 @@ function resolveJob(jobId, customJdBody) {
     }
   }
   if (!job) {
-    const allJobs = jobsDb.getAll({ status: "Active" });
+    const filter = user ? { userId: user.id, userEmail: user.email, status: "Active" } : { status: "Active" };
+    const allJobs = jobsDb.getAll(filter);
     job = allJobs[0] || {
       id: "default-job",
       title: "Senior Full Stack Engineer",
@@ -102,12 +107,21 @@ function resolveJob(jobId, customJdBody) {
   return job;
 }
 
-// GET /api/resumes - list all candidates/resumes
-router.get("/", (req, res) => {
+// GET /api/resumes - list all candidates/resumes scoped to authenticated recruiter
+router.get("/", requireAuth, (req, res) => {
   try {
-    const { status, role, search, field, domain, jobId, sortBy, userEmail } = req.query;
-    const authorEmail = userEmail || req.headers["x-user-email"];
-    const list = resumesDb.getAll({ status, role, search, field, domain, jobId, sortBy, userEmail: authorEmail });
+    const { status, role, search, field, domain, jobId, sortBy } = req.query;
+    const list = resumesDb.getAll({
+      status,
+      role,
+      search,
+      field,
+      domain,
+      jobId,
+      sortBy,
+      userId: req.user.id,
+      userEmail: req.user.email
+    });
     res.json({
       success: true,
       count: list.length,
@@ -125,7 +139,7 @@ router.get("/domains", (req, res) => {
 });
 
 // POST /api/resumes/upload-and-screen - upload single resume file and screen against target JD
-router.post("/upload-and-screen", handleUpload, async (req, res) => {
+router.post("/upload-and-screen", requireAuth, handleUpload, async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, error: "No resume file uploaded" });
@@ -138,7 +152,7 @@ router.post("/upload-and-screen", handleUpload, async (req, res) => {
     const parsed = await parseResume(req.file.buffer, mimeType, originalName);
 
     // 2. Resolve target job
-    const job = resolveJob(req.body.jobId, req.body.customJd);
+    const job = resolveJob(req.body.jobId, req.body.customJd, req.user);
 
     // 3. Transparent, reproducible ATS scoring
     const candidateDataForAnalysis = {
@@ -164,14 +178,15 @@ router.post("/upload-and-screen", handleUpload, async (req, res) => {
     let s3Metadata = null;
     try {
       const sanitizedName = originalName.replace(/[^a-zA-Z0-9.-]/g, "_");
-      const s3Key = `resumes/${Date.now()}_${sanitizedName}`;
+      const s3Key = `resumes/${req.user.id}_${Date.now()}_${sanitizedName}`;
       s3Metadata = await awsService.uploadToS3(req.file.buffer, s3Key, mimeType);
     } catch (s3Err) {
       console.warn("[AWS-S3] Upload notice:", s3Err.message);
     }
 
     // 5. Persist candidate in database with no duplicate creation
-    const authorEmail = req.body.createdBy || req.body.userEmail || req.headers["x-user-email"] || "";
+    const authorEmail = req.user.email;
+    const authorId = req.user.id;
     const candidateRecord = resumesDb.create({
       name: parsed.candidate.name,
       email: parsed.candidate.email,
@@ -181,6 +196,8 @@ router.post("/upload-and-screen", handleUpload, async (req, res) => {
       field: parsed.domains.primary,
       domain: parsed.domains.primary,
       secondaryDomains: parsed.domains.secondary,
+      userId: authorId,
+      user_id: authorId,
       createdBy: authorEmail,
       userEmail: authorEmail,
       experience: parsed.experience_display,
@@ -226,6 +243,17 @@ router.post("/upload-and-screen", handleUpload, async (req, res) => {
       });
     }
 
+    // In-app Notification Trigger
+    const notificationService = require("../services/notificationService");
+    notificationService.notifyResumeUploaded({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      candidateName: candidateRecord.name,
+      score: analysis.matchScore || analysis.atsScore,
+      role: candidateRecord.role,
+      resumeId: candidateRecord.id
+    }).catch(e => console.warn("Notification error:", e.message));
+
     res.status(201).json({
       success: true,
       data: candidateRecord,
@@ -241,14 +269,14 @@ router.post("/upload-and-screen", handleUpload, async (req, res) => {
 });
 
 // POST /api/resumes/upload-batch - upload and process multiple resumes simultaneously
-router.post("/upload-batch", handleMultipleUpload, async (req, res) => {
+router.post("/upload-batch", requireAuth, handleMultipleUpload, async (req, res) => {
   try {
     const files = req.files;
     if (!files || files.length === 0) {
       return res.status(400).json({ success: false, error: "No resume files uploaded" });
     }
 
-    const job = resolveJob(req.body.jobId, req.body.customJd);
+    const job = resolveJob(req.body.jobId, req.body.customJd, req.user);
     const results = [];
     const errors = [];
 
@@ -278,7 +306,8 @@ router.post("/upload-batch", handleMultipleUpload, async (req, res) => {
 
         const analysis = await analyzeResumeAgainstJd(candidateDataForAnalysis, job);
 
-        const authorEmail = req.body.createdBy || req.body.userEmail || req.headers["x-user-email"] || "";
+        const authorEmail = req.user.email;
+        const authorId = req.user.id;
         const candidateRecord = resumesDb.create({
           name: parsed.candidate.name,
           email: parsed.candidate.email,
@@ -318,6 +347,8 @@ router.post("/upload-batch", handleMultipleUpload, async (req, res) => {
           requiresOcr: parsed.requires_ocr,
           ocrWarning: parsed.ocr_warning,
           rawText: parsed.raw_text?.slice(0, 3000),
+          userId: authorId,
+          user_id: authorId,
           createdBy: authorEmail,
           userEmail: authorEmail
         });
@@ -343,12 +374,12 @@ router.post("/upload-batch", handleMultipleUpload, async (req, res) => {
 });
 
 // POST /api/resumes/analyze-batch-jd - batch re-analyze multiple resumes against a target JD
-router.post("/analyze-batch-jd", async (req, res) => {
+router.post("/analyze-batch-jd", requireAuth, async (req, res) => {
   try {
     const { jobId, customJd, candidateIds } = req.body;
-    const job = resolveJob(jobId, customJd);
+    const job = resolveJob(jobId, customJd, req.user);
 
-    const allCandidates = resumesDb.getAll();
+    const allCandidates = resumesDb.getAll({ userId: req.user.id, userEmail: req.user.email });
     const targets = candidateIds && candidateIds.length > 0
       ? allCandidates.filter(c => candidateIds.includes(c.id))
       : allCandidates;
@@ -356,6 +387,7 @@ router.post("/analyze-batch-jd", async (req, res) => {
     const results = await Promise.all(
       targets.map(async (candidate) => {
         try {
+          if (!isResourceOwnedBy(candidate, req.user)) return candidate;
           const analysis = await analyzeResumeAgainstJd(candidate, job);
           const updated = resumesDb.update(candidate.id, {
             atsScore: analysis.atsScore,
@@ -403,15 +435,15 @@ router.post("/analyze-batch-jd", async (req, res) => {
 });
 
 // POST /api/resumes/:id/analyze-jd - analyze single candidate against a target JD
-router.post("/:id/analyze-jd", async (req, res) => {
+router.post("/:id/analyze-jd", requireAuth, async (req, res) => {
   try {
     const candidate = resumesDb.getById(req.params.id);
-    if (!candidate) {
+    if (!candidate || !isResourceOwnedBy(candidate, req.user)) {
       return res.status(404).json({ success: false, error: "Candidate resume not found" });
     }
 
     const { jobId, customJd } = req.body;
-    const job = resolveJob(jobId, customJd);
+    const job = resolveJob(jobId, customJd, req.user);
 
     const analysis = await analyzeResumeAgainstJd(candidate, job);
     const updated = resumesDb.update(candidate.id, {
@@ -444,10 +476,10 @@ router.post("/:id/analyze-jd", async (req, res) => {
 });
 
 // GET /api/resumes/:id - get single resume/candidate
-router.get("/:id", (req, res) => {
+router.get("/:id", requireAuth, (req, res) => {
   try {
     const resume = resumesDb.getById(req.params.id);
-    if (!resume) {
+    if (!resume || !isResourceOwnedBy(resume, req.user)) {
       return res.status(404).json({ success: false, error: "Candidate resume not found" });
     }
     res.json({ success: true, data: resume });
@@ -457,11 +489,14 @@ router.get("/:id", (req, res) => {
 });
 
 // POST /api/resumes - create/upload resume directly
-router.post("/", (req, res) => {
+router.post("/", requireAuth, (req, res) => {
   try {
-    const authorEmail = req.body.createdBy || req.body.userEmail || req.headers["x-user-email"] || "";
+    const authorEmail = req.user.email;
+    const authorId = req.user.id;
     const candidate = resumesDb.create({
       ...req.body,
+      userId: authorId,
+      user_id: authorId,
       createdBy: authorEmail,
       userEmail: authorEmail
     });
@@ -472,12 +507,14 @@ router.post("/", (req, res) => {
 });
 
 // PUT /api/resumes/:id - update resume
-router.put("/:id", async (req, res) => {
+router.put("/:id", requireAuth, async (req, res) => {
   try {
-    const updated = resumesDb.update(req.params.id, req.body);
-    if (!updated) {
+    const existing = resumesDb.getById(req.params.id);
+    if (!existing || !isResourceOwnedBy(existing, req.user)) {
       return res.status(404).json({ success: false, error: "Candidate resume not found" });
     }
+
+    const updated = resumesDb.update(req.params.id, req.body);
 
     if (req.body.status === "Shortlisted") {
       automatedEmailService.sendCandidateShortlistedEmail({ candidate: updated, req }).catch(err => {
@@ -496,16 +533,19 @@ router.put("/:id", async (req, res) => {
 });
 
 // PATCH /api/resumes/:id/status - update status (e.g. Shortlisted, Rejected, Hired, Selected)
-router.patch("/:id/status", async (req, res) => {
+router.patch("/:id/status", requireAuth, async (req, res) => {
   try {
     const { status } = req.body;
     if (!status) {
       return res.status(400).json({ success: false, error: "Status is required" });
     }
-    const updated = resumesDb.updateStatus(req.params.id, status);
-    if (!updated) {
+
+    const existing = resumesDb.getById(req.params.id);
+    if (!existing || !isResourceOwnedBy(existing, req.user)) {
       return res.status(404).json({ success: false, error: "Candidate resume not found" });
     }
+
+    const updated = resumesDb.updateStatus(req.params.id, status);
 
     // Trigger Automated Email System
     if (status === "Shortlisted") {
@@ -525,8 +565,13 @@ router.patch("/:id/status", async (req, res) => {
 });
 
 // DELETE /api/resumes/:id - delete resume
-router.delete("/:id", (req, res) => {
+router.delete("/:id", requireAuth, (req, res) => {
   try {
+    const existing = resumesDb.getById(req.params.id);
+    if (!existing || !isResourceOwnedBy(existing, req.user)) {
+      return res.status(404).json({ success: false, error: "Candidate resume not found" });
+    }
+
     const deleted = resumesDb.delete(req.params.id);
     if (!deleted) {
       return res.status(404).json({ success: false, error: "Candidate resume not found" });

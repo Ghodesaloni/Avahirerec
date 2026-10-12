@@ -247,24 +247,33 @@ router.post("/parse-document", upload.single("document"), async (req, res) => {
   }
 });
 
-// GET /api/jobs - list all jobs with optional query filters
-router.get("/", async (req, res) => {
+const { requireAuth } = require("../middleware/authMiddleware");
+
+// GET /api/jobs - list all jobs scoped strictly to the authenticated recruiter's account
+router.get("/", requireAuth, async (req, res) => {
   try {
-    const { status, dept, workMode, search, userEmail } = req.query;
-    const authorEmail = userEmail || req.headers["x-user-email"];
-    const jobs = await jobsDb.getAllAsync({ status, dept, workMode, search, userEmail: authorEmail });
+    const { status, dept, workMode, search } = req.query;
+    const jobs = await jobsDb.getAllAsync({
+      status,
+      dept,
+      workMode,
+      search,
+      user: req.user,
+      userId: req.user.id,
+      userEmail: req.user.email
+    });
     res.json({ success: true, count: jobs.length, data: jobs });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// GET /api/jobs/:id - get single job
-router.get("/:id", (req, res) => {
+// GET /api/jobs/:id - get single job (with IDOR protection)
+router.get("/:id", requireAuth, async (req, res) => {
   try {
-    const job = jobsDb.getById(req.params.id);
+    const job = await jobsDb.getById(req.params.id, req.user);
     if (!job) {
-      return res.status(404).json({ success: false, error: "Job not found" });
+      return res.status(404).json({ success: false, error: "Job not found or access denied" });
     }
     res.json({ success: true, data: job });
   } catch (err) {
@@ -272,14 +281,14 @@ router.get("/:id", (req, res) => {
   }
 });
 
-// POST /api/jobs - create new job
-router.post("/", (req, res) => {
+// POST /api/jobs - create new job associated with authenticated account
+router.post("/", requireAuth, (req, res) => {
   try {
-    const { title, dept, jobLevel, reportsTo, loc, isRemotePosition, workMode, type, expLevel, description, keySkills, status, createdBy, userEmail } = req.body;
+    const { title, dept, jobLevel, reportsTo, loc, isRemotePosition, workMode, type, expLevel, description, keySkills, status } = req.body;
     if (!title) {
       return res.status(400).json({ success: false, error: "Job title is required" });
     }
-    const authorEmail = createdBy || userEmail || req.headers["x-user-email"] || "";
+
     const newJob = jobsDb.create({
       title,
       dept,
@@ -293,21 +302,32 @@ router.post("/", (req, res) => {
       description,
       keySkills,
       status,
-      createdBy: authorEmail,
-      userEmail: authorEmail
+      userId: req.user.id,
+      createdBy: req.user.email,
+      userEmail: req.user.email
     });
+
+    // In-app Notification Trigger
+    const notificationService = require("../services/notificationService");
+    notificationService.notifyJobCreated({
+      userEmail: req.user.email,
+      jobTitle: newJob.title,
+      dept: newJob.dept,
+      jobId: newJob.id
+    }).catch(e => console.warn("Notification error:", e.message));
+
     res.status(201).json({ success: true, data: newJob, message: "Job created successfully" });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// PUT /api/jobs/:id - update existing job
-router.put("/:id", (req, res) => {
+// PUT /api/jobs/:id - update existing job (only permitted for owner)
+router.put("/:id", requireAuth, async (req, res) => {
   try {
-    const updated = jobsDb.update(req.params.id, req.body);
+    const updated = await jobsDb.update(req.params.id, req.body, req.user);
     if (!updated) {
-      return res.status(404).json({ success: false, error: "Job not found" });
+      return res.status(404).json({ success: false, error: "Job not found or unauthorized to update" });
     }
     res.json({ success: true, data: updated, message: "Job updated successfully" });
   } catch (err) {
@@ -315,12 +335,12 @@ router.put("/:id", (req, res) => {
   }
 });
 
-// DELETE /api/jobs/:id - delete job
-router.delete("/:id", (req, res) => {
+// DELETE /api/jobs/:id - delete job (only permitted for owner)
+router.delete("/:id", requireAuth, async (req, res) => {
   try {
-    const deleted = jobsDb.delete(req.params.id);
+    const deleted = await jobsDb.delete(req.params.id, req.user);
     if (!deleted) {
-      return res.status(404).json({ success: false, error: "Job not found" });
+      return res.status(404).json({ success: false, error: "Job not found or unauthorized to delete" });
     }
     res.json({ success: true, message: "Job deleted successfully" });
   } catch (err) {

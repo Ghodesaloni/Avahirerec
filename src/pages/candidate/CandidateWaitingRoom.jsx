@@ -17,11 +17,13 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { getInterviewByCodeOrId } from "@/utils/interviewStore";
+import { useInterviewSettings } from "@/utils/interviewSettingsStore";
 import AvaHireLogo from "@/components/AvaHireLogo";
 
 const CandidateWaitingRoom = () => {
     const { code } = useParams();
     const navigate = useNavigate();
+    const { settings } = useInterviewSettings();
 
     const [interviewData, setInterviewData] = useState(() => {
         const found = getInterviewByCodeOrId(code);
@@ -245,7 +247,7 @@ const CandidateWaitingRoom = () => {
                                         <span>Interview Duration</span>
                                     </div>
                                     <span className="text-xs sm:text-sm font-bold text-slate-900 text-right">
-                                        {interviewData.duration || "30 Minutes"}
+                                        {interviewData.duration || settings.duration || "30 Minutes"}
                                     </span>
                                 </div>
 

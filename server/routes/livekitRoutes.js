@@ -5,6 +5,7 @@ const candidateSessionsDb = require("../db/candidateSessionsDb");
 const interviewsDb = require("../db/interviewsDb");
 const resumesDb = require("../db/resumesDb");
 const candidatesDb = require("../db/candidatesDb");
+const settingsDb = require("../db/settingsDb");
 const { analyzeCandidateResumeForAgent } = require("../services/resumeQuestionService");
 
 // Token generation endpoint for Candidate Live Interview & AI Agent Connection
@@ -84,8 +85,12 @@ router.all("/token", async (req, res) => {
       resumeFileName: matchedResume?.resumeFileName || session?.resumeFileName || null
     };
 
+    // Retrieve effective interview settings for this recruiter / scheduled session
+    const recruiterEmail = scheduledInterview?.recruiterEmail || scheduledInterview?.createdBy || session?.recruiterEmail || body.recruiterEmail || body.userEmail || req.headers["x-user-email"] || null;
+    const ivSettings = await settingsDb.getInterviewSettingsAsync(recruiterEmail);
+
     // Deeply analyze candidate resume to extract projects, motivations, architectures, and targeted questions
-    const resumeAnalysis = analyzeCandidateResumeForAgent(combinedCandidateData, scheduledInterview);
+    const resumeAnalysis = analyzeCandidateResumeForAgent(combinedCandidateData, scheduledInterview, ivSettings);
 
     const participantIdentity = body.participant_identity || body.identity || `cand_${roomCode}_${Math.floor(Math.random() * 100000)}`;
 
@@ -108,9 +113,22 @@ router.all("/token", async (req, res) => {
       rawText: resumeAnalysis.rawResumeSnippet,
       questions: resumeAnalysis.generatedQuestions,
       resumeAnalysis,
+      interviewSettings: ivSettings,
+      aiAvatar: ivSettings.aiAvatar || "Ava (Female)",
+      difficulty: ivSettings.difficulty || "Medium",
+      language: ivSettings.language || "English (US)",
+      askFollowUps: ivSettings.askFollowUps !== false,
+      proctoringSettings: {
+        enableProctoring: ivSettings.enableProctoring !== false,
+        faceDetection: ivSettings.faceDetection !== false,
+        multiplePersonDetection: ivSettings.multiplePersonDetection !== false,
+        tabSwitchDetection: ivSettings.tabSwitchDetection !== false,
+        fullScreenMonitoring: ivSettings.fullScreenMonitoring !== false,
+        suspiciousThreshold: ivSettings.suspiciousThreshold || "Medium"
+      },
       scheduledDate: scheduledInterview?.date || "Today",
       scheduledTime: scheduledInterview?.time || "Scheduled Slot",
-      duration: scheduledInterview?.duration || "45 Minutes",
+      duration: scheduledInterview?.duration || `${ivSettings.interviewDuration || 45} Minutes`,
       authenticated: true,
       timestamp: Date.now()
     };
@@ -235,7 +253,10 @@ router.get("/session-info/:code", async (req, res) => {
       resumeFileName: matchedResume?.resumeFileName || session?.resumeFileName || null
     };
 
-    const resumeAnalysis = analyzeCandidateResumeForAgent(combinedCandidateData, scheduled);
+    const recruiterEmail = scheduled?.recruiterEmail || scheduled?.createdBy || session?.recruiterEmail || req.headers["x-user-email"] || null;
+    const ivSettings = await settingsDb.getInterviewSettingsAsync(recruiterEmail);
+
+    const resumeAnalysis = analyzeCandidateResumeForAgent(combinedCandidateData, scheduled, ivSettings);
 
     res.json({
       success: true,
@@ -252,6 +273,7 @@ router.get("/session-info/:code", async (req, res) => {
         projectHighlights: resumeAnalysis.projectHighlights,
         questions: resumeAnalysis.generatedQuestions,
         resumeAnalysis,
+        interviewSettings: ivSettings,
         status: session?.status || scheduled?.status || "Ready"
       }
     });

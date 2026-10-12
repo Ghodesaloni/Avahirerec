@@ -26,6 +26,19 @@ import {
 import { getStoredInterviews, saveInterviews, addOrUpdateInterview, removeInterview } from "@/utils/interviewStore";
 import { interviewsApi, candidatePortalApi, candidatesApi, resumesApi } from "@/services/api";
 
+const isTestOrDemoInterview = (iv) => {
+    if (!iv) return true;
+    const cid = String(iv.candidateId || iv.resumeId || "").toLowerCase();
+    const name = String(iv.name || "").toLowerCase().trim();
+    const email = String(iv.email || "").toLowerCase().trim();
+    if (cid.includes("cand-demo") || cid.includes("demo")) return true;
+    if (name === "ananya sharma" || name === "rohan varma" || name === "priyanka patel") return true;
+    if (name === "management tools" || name.includes("prachi jain") || name === "team members") return true;
+    if (name === "srtyse" || name === "hjjiy" || name === "hello" || email === "hello@mail.com" || email === "awer@drtyg" || email === "sdfg@werr") return true;
+    if (name === "candidate" && (!email || email.includes("example.com"))) return true;
+    return false;
+};
+
 const Interviews = () => {
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
@@ -35,7 +48,7 @@ const Interviews = () => {
     const [activeTab, setActiveTab] = useState(initialTab);
 
     // Core Data States
-    const [interviews, setInterviews] = useState(getStoredInterviews);
+    const [interviews, setInterviews] = useState(() => (getStoredInterviews() || []).filter(iv => !isTestOrDemoInterview(iv)));
     const [candidatesList, setCandidatesList] = useState([]);
     const [resumesList, setResumesList] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -100,10 +113,12 @@ const Interviews = () => {
             ]);
 
             if (ivData && Array.isArray(ivData)) {
-                setInterviews(ivData);
-                saveInterviews(ivData);
+                const clean = ivData.filter((iv) => !isTestOrDemoInterview(iv));
+                setInterviews(clean);
+                saveInterviews(clean);
             } else {
-                setInterviews(getStoredInterviews());
+                const clean = (getStoredInterviews() || []).filter((iv) => !isTestOrDemoInterview(iv));
+                setInterviews(clean);
             }
 
             if (Array.isArray(cList)) {
@@ -114,7 +129,8 @@ const Interviews = () => {
             }
         } catch (err) {
             console.error("Failed to load interview and candidate data:", err);
-            setInterviews(getStoredInterviews());
+            const clean = (getStoredInterviews() || []).filter((iv) => !isTestOrDemoInterview(iv));
+            setInterviews(clean);
         } finally {
             setLoading(false);
         }
@@ -182,19 +198,25 @@ const Interviews = () => {
         });
     };
 
-    // Combine & Normalize all Shortlisted Candidates
+    // Combine & Normalize all Shortlisted Candidates from the Resume page
     const allShortlistedCandidates = useMemo(() => {
         const map = new Map();
 
-        // 1. Process Resumes FIRST to prioritize all Shortlisted Resumes from Resume screening
+        // 1. Process Resumes FIRST to strictly include genuine Shortlisted Candidates from Resume screening
         resumesList.forEach((r) => {
             const statusStr = (r.status || "").toLowerCase().trim();
-            const isShortlisted =
-                statusStr === "shortlisted" ||
-                statusStr === "interview scheduled" ||
-                r.isShortlisted === true ||
-                (typeof r.matchScore === "number" && r.matchScore >= 80) ||
-                (typeof r.score === "number" && r.score >= 80);
+            const nameStr = (r.name || r.candidateName || "").toLowerCase().trim();
+            const isTestEntity =
+                !r.name ||
+                nameStr === "management tools" ||
+                nameStr.includes("prachi jain") ||
+                nameStr === "team members" ||
+                nameStr === "the new sdlc" ||
+                nameStr === "job details" ||
+                nameStr === "candidate";
+
+            // Candidate must have genuine "shortlisted" status from the Resume page
+            const isShortlisted = (statusStr === "shortlisted" || r.isShortlisted === true) && !isTestEntity;
 
             if (isShortlisted) {
                 const key = r.id || (r.email ? `res-${r.email.toLowerCase().trim()}` : `res-${Math.random()}`);
@@ -215,22 +237,27 @@ const Interviews = () => {
                     location: r.location || "India",
                     status: "Shortlisted",
                     appliedDate: r.uploadedAt || r.uploadedDate || "Recent",
-                    avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(r.name || "Res")}`,
+                    avatar: r.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(r.name || "Res")}`,
                     source: "Resume Screening",
                     isResumeShortlisted: true
                 });
             }
         });
 
-        // 2. From Candidates API: include candidates only if genuinely Shortlisted and not already present
+        // 2. From Candidates API: include candidates only if genuinely Shortlisted and not a test entity
         candidatesList.forEach((c) => {
             const statusStr = (c.status || "").toLowerCase().trim();
             const stageStr = (c.stage || "").toLowerCase().trim();
-            const isShortlisted =
-                statusStr === "shortlisted" ||
-                stageStr === "shortlisted" ||
-                statusStr === "interview scheduled" ||
-                statusStr === "screened";
+            const nameStr = (c.name || "").toLowerCase().trim();
+            const isTestEntity =
+                !c.name ||
+                nameStr === "foreign candidate" ||
+                nameStr === "candidate" ||
+                nameStr === "srtyse" ||
+                nameStr === "hjjiy" ||
+                nameStr === "hello";
+
+            const isShortlisted = (statusStr === "shortlisted" || stageStr === "shortlisted") && !isTestEntity;
 
             if (isShortlisted) {
                 const alreadyExists = Array.from(map.values()).some(
@@ -251,7 +278,7 @@ const Interviews = () => {
                         skills: Array.isArray(c.skills) ? c.skills : (c.skills ? String(c.skills).split(",") : ["React", "TypeScript", "Node.js"]),
                         experience: c.experience || "3+ years",
                         location: c.location || "Remote / India",
-                        status: c.status || "Shortlisted",
+                        status: "Shortlisted",
                         appliedDate: c.appliedDate || c.date || "Recent",
                         avatar: c.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(c.name || "Cand")}`,
                         source: "Candidate Pipeline"
@@ -260,66 +287,11 @@ const Interviews = () => {
             }
         });
 
-        // Fallback demo candidates ONLY if database has completely 0 candidates and resumes
-        if (map.size === 0) {
-            const defaults = [
-                {
-                    id: "cand-demo-1",
-                    name: "Ananya Sharma",
-                    email: "ananya.sharma@example.com",
-                    phone: "+91 98765 43210",
-                    role: "Frontend Engineer",
-                    department: "Engineering",
-                    score: 95,
-                    skills: ["React.js", "Next.js", "Tailwind CSS", "TypeScript"],
-                    experience: "4 Years",
-                    location: "Bengaluru, India",
-                    status: "Shortlisted",
-                    appliedDate: "Today",
-                    avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=150",
-                    source: "AI Resume Match"
-                },
-                {
-                    id: "cand-demo-2",
-                    name: "Rohan Varma",
-                    email: "rohan.varma@example.com",
-                    phone: "+91 91234 56789",
-                    role: "Full Stack Developer",
-                    department: "Engineering",
-                    score: 92,
-                    skills: ["Node.js", "React", "PostgreSQL", "AWS"],
-                    experience: "5 Years",
-                    location: "Pune, India",
-                    status: "Shortlisted",
-                    appliedDate: "Yesterday",
-                    avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=150",
-                    source: "AI Resume Match"
-                },
-                {
-                    id: "cand-demo-3",
-                    name: "Priyanka Patel",
-                    email: "priyanka.patel@example.com",
-                    phone: "+91 99887 76655",
-                    role: "Python / AI Engineer",
-                    department: "AI & ML",
-                    score: 89,
-                    skills: ["Python", "FastAPI", "OpenAI", "PyTorch"],
-                    experience: "3.5 Years",
-                    location: "Hyderabad, India",
-                    status: "Shortlisted",
-                    appliedDate: "2 days ago",
-                    avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=150",
-                    source: "AI Resume Match"
-                }
-            ];
-            defaults.forEach((d) => map.set(d.id, d));
-        }
-
         return Array.from(map.values());
     }, [candidatesList, resumesList]);
 
     // Candidates who should be shown in Shortlisted Interviewees.
-    // All shortlisted resumes from the resume screening are always visible!
+    // Transferred out once an interview link has been generated.
     const shortlistedPendingList = useMemo(() => {
         return allShortlistedCandidates
             .map((cand) => {
@@ -340,13 +312,7 @@ const Interviews = () => {
                     interviewTime: iv ? iv.time : null
                 };
             })
-            .filter((cand) => {
-                // All shortlisted resumes from the resume page must be visible!
-                if (cand.isResumeShortlisted || cand.source === "Resume Screening") {
-                    return true;
-                }
-                return !cand.hasGeneratedLink;
-            })
+            .filter((cand) => !cand.hasGeneratedLink)
             .sort((a, b) => (b.score || 0) - (a.score || 0));
     }, [allShortlistedCandidates, interviews]);
 
@@ -356,11 +322,35 @@ const Interviews = () => {
         return shortlistedPendingList.slice(start, start + pageSize);
     }, [shortlistedPendingList, candidatePage, pageSize]);
 
-    const totalInterviewPages = Math.max(1, Math.ceil(interviews.length / pageSize));
+    const cleanInterviewsList = useMemo(() => {
+        // Collect IDs and emails of shortlisted candidates whose links have not been generated yet
+        const pendingIds = new Set(
+            shortlistedPendingList.map((c) => c.id).filter(Boolean)
+        );
+        const pendingEmails = new Set(
+            shortlistedPendingList.map((c) => (c.email || "").toLowerCase().trim()).filter(Boolean)
+        );
+
+        return interviews.filter((iv) => {
+            if (isTestOrDemoInterview(iv)) return false;
+            // Only include candidates whose link has actually been generated
+            if (!iv.linkCode || !String(iv.linkCode).trim()) return false;
+
+            // Exclude candidate if they are still pending link generation in Shortlisted Interviewees
+            const cid = iv.candidateId || iv.resumeId;
+            const em = (iv.email || "").toLowerCase().trim();
+            if (cid && pendingIds.has(cid)) return false;
+            if (em && pendingEmails.has(em)) return false;
+
+            return true;
+        });
+    }, [interviews, shortlistedPendingList]);
+
+    const totalInterviewPages = Math.max(1, Math.ceil(cleanInterviewsList.length / pageSize));
     const paginatedInterviews = useMemo(() => {
         const start = (currentPage - 1) * pageSize;
-        return interviews.slice(start, start + pageSize);
-    }, [interviews, currentPage, pageSize]);
+        return cleanInterviewsList.slice(start, start + pageSize);
+    }, [cleanInterviewsList, currentPage, pageSize]);
 
     useEffect(() => {
         setCandidatePage(1);
@@ -564,11 +554,6 @@ const Interviews = () => {
                         <div>
                             <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
                                 <span>{activeTab === "interviewee" ? "Shortlisted Interviewees" : "AI Video Interviews"}</span>
-                                {activeTab !== "interviewee" && (
-                                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-violet-100 text-violet-700 border border-violet-200">
-                                        {interviews.length} Sessions
-                                    </span>
-                                )}
                             </h1>
                             {activeTab !== "interviewee" && (
                                 <p className="text-xs sm:text-sm text-slate-500">
@@ -824,7 +809,7 @@ const Interviews = () => {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 text-xs font-medium">
-                                {interviews.length === 0 ? (
+                                {cleanInterviewsList.length === 0 ? (
                                     <tr>
                                         <td colSpan="7" className="py-16 text-center text-slate-400">
                                             <div className="max-w-md mx-auto space-y-3">
@@ -1037,14 +1022,8 @@ const Interviews = () => {
                     </div>
 
                     {/* Footer Controls */}
-                    <div className="p-4 sm:px-6 border-t border-slate-100 flex flex-wrap items-center justify-between gap-4 text-xs text-slate-500">
-                        <div>
-                            {interviews.length === 0
-                                ? "Showing 0 entries"
-                                : `Showing ${(currentPage - 1) * pageSize + 1} to ${Math.min(currentPage * pageSize, interviews.length)} of ${interviews.length} entries`}
-                        </div>
-
-                        <div className="flex items-center gap-1.5 mx-auto sm:mx-0">
+                    <div className="p-4 sm:px-6 border-t border-slate-100 flex flex-wrap items-center justify-end gap-4 text-xs text-slate-500">
+                        <div className="flex items-center gap-1.5">
                             <button
                                 onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                                 disabled={currentPage <= 1}
@@ -1265,7 +1244,7 @@ const Interviews = () => {
                                         <label className="block font-bold text-slate-700 mb-1">Phone Number (Resume)</label>
                                         <input
                                             type="tel"
-                                            placeholder="e.g. +91-8999646955"
+                                            placeholder="e.g. +91-xxxxxxxxxx"
                                             value={newCandidatePhone}
                                             onChange={(e) => setNewCandidatePhone(e.target.value)}
                                             className="w-full px-3.5 py-2.5 bg-slate-50/50 border border-slate-200 rounded-xl focus:outline-none focus:border-violet-500 text-slate-800 font-mono"

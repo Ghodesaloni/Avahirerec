@@ -121,6 +121,7 @@ const CandidateLiveRoom = () => {
 
     const initAudioRecorder = () => {
         try {
+            if (settings?.audioRecording === false) return;
             if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") return;
             const AudioCtx = window.AudioContext || window.webkitAudioContext;
             if (!AudioCtx) return;
@@ -282,6 +283,17 @@ const CandidateLiveRoom = () => {
         return () => clearInterval(interval);
     }, [interviewEnded, connectionStatus]);
 
+    // Enforce Auto-End on Timeout if enabled in interview settings
+    useEffect(() => {
+        if (interviewEnded || connectionStatus !== "connected") return;
+        if (settings?.autoEnd === false) return;
+        const durationMins = parseInt(settings?.duration || interviewData?.duration || "30", 10) || 30;
+        const maxDurationSecs = durationMins * 60;
+        if (elapsedSeconds >= maxDurationSecs) {
+            handleEndAndSaveInterview("Allocated interview duration completed.");
+        }
+    }, [elapsedSeconds, interviewEnded, connectionStatus, settings?.autoEnd, settings?.duration, interviewData?.duration]);
+
     const formatTime = (totalSeconds) => {
         const hrs = Math.floor(totalSeconds / 3600);
         const mins = Math.floor((totalSeconds % 3600) / 60);
@@ -301,6 +313,14 @@ const CandidateLiveRoom = () => {
     // -------------------------------------------------------------
     const sendViolation = async (type, reason, metadata = {}) => {
         if (interviewEnded) return;
+
+        // Proctoring Settings Enforcement: suppress checks when disabled in interview settings
+        if (settings?.enableProctoring === false) return;
+        if ((type === "face_missing" || type === "face_not_centered" || type === "low_lighting") && settings?.faceDetection === false) return;
+        if ((type === "multiple_faces" || type === "multiple_voices") && settings?.multiplePersonDetection === false) return;
+        if ((type === "tab_switched" || type === "window_blur") && settings?.tabSwitchDetection === false) return;
+        if (type === "fullscreen_exit" && settings?.fullScreenMonitoring === false) return;
+
         const roomCode = interviewData?.linkCode || code || "";
 
         // 1. Broadcast over LiveKit room data channel to AI Agent
@@ -1235,6 +1255,14 @@ const CandidateLiveRoom = () => {
             setTerminationReason(reason);
         }
 
+        const isTerminated = !!reason;
+        const currentLinkCode = interviewData?.linkCode || code || "";
+        const queryParamStr = isTerminated ? `?status=terminated&reason=${encodeURIComponent(reason)}` : "";
+        const thankYouPath = currentLinkCode ? `/i/${currentLinkCode}/thank-you${queryParamStr}` : `/thank-you${queryParamStr}`;
+
+        // Directly navigate to the Thank You page immediately
+        navigate(thankYouPath, { replace: true });
+
         if (hasSavedRef.current) return;
         hasSavedRef.current = true;
 
@@ -1640,15 +1668,7 @@ const CandidateLiveRoom = () => {
 
                     <button
                         onClick={() => {
-                            let confirmed = true;
-                            try {
-                                confirmed = window.confirm("Are you sure you want to end your interview and submit responses?");
-                            } catch (e) {
-                                confirmed = true;
-                            }
-                            if (confirmed) {
-                                handleEndInterview();
-                            }
+                            handleEndInterview();
                         }}
                         className="flex items-center gap-2 px-4 py-2 rounded-xl border border-red-500/30 hover:border-red-500/60 bg-red-950/35 hover:bg-red-900/50 backdrop-blur-md text-red-300 text-xs font-bold transition cursor-pointer shadow-lg"
                     >

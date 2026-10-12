@@ -198,15 +198,6 @@ const ReportsDownloads = () => {
               <FileSpreadsheet className="w-6 h-6 text-emerald-600" />
               <span>Reports</span>
             </h1>
-            <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-semibold border border-emerald-200 flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Live Account Reports</span>
-            </span>
-            {accountEmail && (
-              <span className="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-lg text-xs font-mono font-medium border border-slate-200">
-                Account: {accountEmail}
-              </span>
-            )}
           </div>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">
             Download daily selected candidate Excel spreadsheets, interview Word transcripts (.docx), and audio recordings for your account.
@@ -223,14 +214,6 @@ const ReportsDownloads = () => {
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin text-emerald-600" : "text-slate-500"}`} />
             <span>{refreshing ? "Synchronizing..." : "Sync Reports"}</span>
           </button>
-
-          <Link
-            to="/app/candidates"
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-semibold shadow-xs transition active:scale-[0.98]"
-          >
-            <span>Candidate Evaluations</span>
-            <ExternalLink className="w-3.5 h-3.5" />
-          </Link>
         </div>
       </div>
 
@@ -325,25 +308,6 @@ const ReportsDownloads = () => {
         </div>
       </div>
 
-      {/* Date Isolation Info Card */}
-      <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-emerald-950">
-        <div className="flex items-start gap-3">
-          <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
-            <CheckCircle2 className="w-4 h-4" />
-          </div>
-          <div className="space-y-0.5">
-            <h4 className="font-bold text-emerald-900 text-xs sm:text-sm">
-              Strict Selection Date Organization &amp; Account Isolation
-            </h4>
-            <p className="text-emerald-800/90 leading-relaxed">
-              Reports and documents are isolated to your account. Candidates marked as <strong>Selected</strong> are strictly grouped by the exact date of HR decision. If a decision is updated to Rejected, the reports are dynamically refreshed to keep your records audit-ready.
-            </p>
-          </div>
-        </div>
-        <div className="text-[11px] text-emerald-700 whitespace-nowrap sm:text-right font-mono shrink-0">
-          Last Synced: {summary?.lastUpdated ? new Date(summary.lastUpdated).toLocaleTimeString("en-GB") : "Active"}
-        </div>
-      </div>
 
       {/* Section 2: Candidate Interview Transcripts (.docx) & Audio Recordings Download Hub */}
       <div className="bg-white rounded-2xl border border-slate-100 p-6 space-y-5 shadow-xs">
@@ -354,13 +318,8 @@ const ReportsDownloads = () => {
                 <FileText className="w-5 h-5 text-violet-600" />
                 <span>Interview Transcripts & Audio Recordings Hub</span>
               </h3>
-              <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-xs font-semibold border border-emerald-200">
-                Selected Candidates Only ({filteredCandidates.length})
-              </span>
             </div>
-            <p className="text-xs text-slate-500 mt-1">
-              Download formatted Word documents (.docx) and full interview audio recordings (.webm) for candidates selected by this account.
-            </p>
+
           </div>
 
           <div className="relative w-full sm:w-64">

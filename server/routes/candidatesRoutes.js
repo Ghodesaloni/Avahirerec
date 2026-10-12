@@ -6,6 +6,7 @@ const candidatesDb = require("../db/candidatesDb");
 const automatedEmailService = require("../services/automatedEmailService");
 const recordingStorageService = require("../services/recordingStorageService");
 const transcriptDocService = require("../services/transcriptDocService");
+const { requireAuth, optionalAuth, isResourceOwnedBy } = require("../middleware/authMiddleware");
 const fs = require("fs");
 
 const audioUpload = multer({
@@ -13,53 +14,73 @@ const audioUpload = multer({
   limits: { fileSize: 100 * 1024 * 1024 } // Allow recordings up to 100MB
 });
 
-// GET /api/candidates - list candidate evaluations
-router.get("/", async (req, res) => {
+// GET /api/candidates - list candidate evaluations strictly scoped to authenticated recruiter
+router.get("/", requireAuth, async (req, res) => {
   try {
-    const { status, role, search, userEmail } = req.query;
-    const authorEmail = userEmail || req.headers["x-user-email"];
-    const list = await candidatesDb.getAll({ status, role, search, userEmail: authorEmail });
+    const { status, role, search } = req.query;
+    const list = await candidatesDb.getAll({
+      status,
+      role,
+      search,
+      user: req.user,
+      userId: req.user.id,
+      userEmail: req.user.email
+    });
     res.json({ success: true, count: list.length, data: list });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// GET /api/candidates/:id/audio - Stream complete AI interview audio recording with HTTP Range seeking
-router.get(["/:id/audio", "/:id/recording/stream"], async (req, res) => {
+// GET /api/candidates/:id/audio - Stream complete AI interview audio recording with HTTP Range seeking & IDOR protection
+router.get(["/:id/audio", "/:id/recording/stream"], optionalAuth, async (req, res) => {
   try {
     const candidateId = req.params.id;
-    const fileInfo = recordingStorageService.findRecordingFile(candidateId);
+    const candidate = await candidatesDb.getById(candidateId);
+
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        error: `Candidate not found with id ${candidateId}`
+      });
+    }
+
+    // IDOR Protection: If recruiter is requesting, verify they own this candidate.
+    // If candidate portal is requesting with linkCode, ensure candidate linkCode matches.
+    if (req.user) {
+      if (!isResourceOwnedBy(candidate, req.user)) {
+        return res.status(404).json({ success: false, error: "Recording not found or access denied" });
+      }
+    } else {
+      const candidateCode = req.query.code || req.headers["x-candidate-link-code"];
+      if (!candidateCode || (candidate.linkCode && candidate.linkCode !== candidateCode)) {
+        return res.status(403).json({ success: false, error: "Unauthorized access to candidate recording" });
+      }
+    }
+
+    let fileInfo = recordingStorageService.findRecordingFile(candidateId);
+    if (!fileInfo && candidate.linkCode) {
+      fileInfo = recordingStorageService.findRecordingFile(candidate.linkCode);
+    }
 
     if (fileInfo) {
       return recordingStorageService.streamAudioFile(req, res, fileInfo);
     }
 
-    // If file not found by candidateId directly, check candidate database record for stored audioUrl or linkCode
-    const candidate = await candidatesDb.getById(candidateId);
-    if (candidate) {
-      if (candidate.linkCode) {
-        const linkFileInfo = recordingStorageService.findRecordingFile(candidate.linkCode);
-        if (linkFileInfo) {
-          return recordingStorageService.streamAudioFile(req, res, linkFileInfo);
+    // If candidate has base64 data URL, convert on the fly to file
+    if (candidate.audioUrl && candidate.audioUrl.startsWith("data:audio/")) {
+      try {
+        const saved = await recordingStorageService.saveRecording({
+          candidateId: candidate.id,
+          audioBase64: candidate.audioUrl
+        });
+        const newFileInfo = recordingStorageService.findRecordingFile(candidate.id);
+        if (newFileInfo) {
+          await candidatesDb.update(candidate.id, { audioUrl: saved.audioUrl, audioPath: saved.filePath });
+          return recordingStorageService.streamAudioFile(req, res, newFileInfo);
         }
-      }
-
-      // If candidate has base64 data URL, convert on the fly to file
-      if (candidate.audioUrl && candidate.audioUrl.startsWith("data:audio/")) {
-        try {
-          const saved = await recordingStorageService.saveRecording({
-            candidateId: candidate.id,
-            audioBase64: candidate.audioUrl
-          });
-          const newFileInfo = recordingStorageService.findRecordingFile(candidate.id);
-          if (newFileInfo) {
-            await candidatesDb.update(candidate.id, { audioUrl: saved.audioUrl, audioPath: saved.filePath });
-            return recordingStorageService.streamAudioFile(req, res, newFileInfo);
-          }
-        } catch (convErr) {
-          console.warn("[CandidatesAPI] On-the-fly audio migration notice:", convErr.message);
-        }
+      } catch (convErr) {
+        console.warn("[CandidatesAPI] On-the-fly audio migration notice:", convErr.message);
       }
     }
 
@@ -73,14 +94,26 @@ router.get(["/:id/audio", "/:id/recording/stream"], async (req, res) => {
   }
 });
 
-// GET /api/candidates/:id/recording - Get recording info/status for candidate
-router.get("/:id/recording", async (req, res) => {
+// GET /api/candidates/:id/recording - Get recording info/status for candidate (IDOR protected)
+router.get("/:id/recording", requireAuth, async (req, res) => {
   try {
     const candidateId = req.params.id;
-    const fileInfo = recordingStorageService.findRecordingFile(candidateId);
-    const candidate = await candidatesDb.getById(candidateId);
+    const candidate = await candidatesDb.getById(candidateId, req.user);
 
-    if (!fileInfo && !candidate?.audioUrl) {
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        exists: false,
+        message: "Candidate not found or access denied"
+      });
+    }
+
+    let fileInfo = recordingStorageService.findRecordingFile(candidateId);
+    if (!fileInfo && candidate.linkCode) {
+      fileInfo = recordingStorageService.findRecordingFile(candidate.linkCode);
+    }
+
+    if (!fileInfo && !candidate.audioUrl) {
       return res.status(404).json({
         success: false,
         exists: false,
@@ -98,8 +131,8 @@ router.get("/:id/recording", async (req, res) => {
         size: fileInfo?.size || 0,
         filename: fileInfo?.filename || "recording.webm",
         mimeType: fileInfo?.mimeType || "audio/webm",
-        duration: candidate?.duration || "N/A",
-        recordingStatus: candidate?.recordingStatus || "completed"
+        duration: candidate.duration || "N/A",
+        recordingStatus: candidate.recordingStatus || "completed"
       }
     });
   } catch (err) {
@@ -108,14 +141,21 @@ router.get("/:id/recording", async (req, res) => {
   }
 });
 
-// GET /api/candidates/:id/audio/download or /api/candidates/:id/recording/download - Download audio recording
-router.get(["/:id/audio/download", "/:id/recording/download"], async (req, res) => {
+// GET /api/candidates/:id/audio/download - Download audio recording (IDOR protected)
+router.get(["/:id/audio/download", "/:id/recording/download"], requireAuth, async (req, res) => {
   try {
     const candidateId = req.params.id;
-    let fileInfo = recordingStorageService.findRecordingFile(candidateId);
-    let candidate = await candidatesDb.getById(candidateId);
+    const candidate = await candidatesDb.getById(candidateId, req.user);
 
-    if (!fileInfo && candidate && candidate.linkCode) {
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        error: `Candidate not found or unauthorized`
+      });
+    }
+
+    let fileInfo = recordingStorageService.findRecordingFile(candidateId);
+    if (!fileInfo && candidate.linkCode) {
       fileInfo = recordingStorageService.findRecordingFile(candidate.linkCode);
     }
 
@@ -126,7 +166,7 @@ router.get(["/:id/audio/download", "/:id/recording/download"], async (req, res) 
       });
     }
 
-    const candidateName = candidate?.name ? candidate.name.replace(/[^a-zA-Z0-9_-]/g, "_") : "candidate";
+    const candidateName = candidate.name ? candidate.name.replace(/[^a-zA-Z0-9_-]/g, "_") : "candidate";
     const ext = path.extname(fileInfo.filePath) || ".webm";
     const downloadFilename = `Interview_Recording_${candidateName}_${candidateId}${ext}`;
 
@@ -142,27 +182,26 @@ router.get(["/:id/audio/download", "/:id/recording/download"], async (req, res) 
   }
 });
 
-// GET /api/candidates/:id/transcript/download - Download Word Document (.docx) transcript
-router.get("/:id/transcript/download", async (req, res) => {
+// GET /api/candidates/:id/transcript/download - Download Word Document (.docx) transcript (IDOR protected)
+router.get("/:id/transcript/download", requireAuth, async (req, res) => {
   try {
     const candidateId = req.params.id;
-    let candidate = await candidatesDb.getById(candidateId);
+    const candidate = await candidatesDb.getById(candidateId, req.user);
 
     if (!candidate) {
       return res.status(404).json({
         success: false,
-        error: `Candidate not found with id ${candidateId}`
+        error: `Candidate not found or access denied`
       });
     }
 
     let docInfo = transcriptDocService.findTranscriptFile(candidateId);
     if (!docInfo || !fs.existsSync(docInfo.filePath)) {
-      // Generate on the fly
       docInfo = await transcriptDocService.generateTranscriptDoc(candidate);
       await candidatesDb.update(candidateId, {
         transcriptPath: docInfo.filePath,
         transcriptUrl: docInfo.downloadUrl
-      }).catch(() => {});
+      }, req.user).catch(() => {});
     }
 
     const candidateName = candidate.name ? candidate.name.replace(/[^a-zA-Z0-9_-]/g, "_") : "Candidate";
@@ -179,14 +218,14 @@ router.get("/:id/transcript/download", async (req, res) => {
   }
 });
 
-// GET /api/candidates/:id/transcript - Get transcript document metadata
-router.get("/:id/transcript", async (req, res) => {
+// GET /api/candidates/:id/transcript - Get transcript document metadata (IDOR protected)
+router.get("/:id/transcript", requireAuth, async (req, res) => {
   try {
     const candidateId = req.params.id;
-    const candidate = await candidatesDb.getById(candidateId);
+    const candidate = await candidatesDb.getById(candidateId, req.user);
 
     if (!candidate) {
-      return res.status(404).json({ success: false, error: "Candidate not found" });
+      return res.status(404).json({ success: false, error: "Candidate not found or access denied" });
     }
 
     let docInfo = transcriptDocService.findTranscriptFile(candidateId);
@@ -195,7 +234,7 @@ router.get("/:id/transcript", async (req, res) => {
       await candidatesDb.update(candidateId, {
         transcriptPath: docInfo.filePath,
         transcriptUrl: docInfo.downloadUrl
-      }).catch(() => {});
+      }, req.user).catch(() => {});
     }
 
     res.json({
@@ -215,21 +254,21 @@ router.get("/:id/transcript", async (req, res) => {
   }
 });
 
-// POST /api/candidates/:id/transcript/generate - Force generate / regenerate transcript docx
-router.post("/:id/transcript/generate", async (req, res) => {
+// POST /api/candidates/:id/transcript/generate - Force generate / regenerate transcript docx (IDOR protected)
+router.post("/:id/transcript/generate", requireAuth, async (req, res) => {
   try {
     const candidateId = req.params.id;
-    const candidate = await candidatesDb.getById(candidateId);
+    const candidate = await candidatesDb.getById(candidateId, req.user);
 
     if (!candidate) {
-      return res.status(404).json({ success: false, error: "Candidate not found" });
+      return res.status(404).json({ success: false, error: "Candidate not found or access denied" });
     }
 
     const docInfo = await transcriptDocService.generateTranscriptDoc(candidate);
     await candidatesDb.update(candidateId, {
       transcriptPath: docInfo.filePath,
       transcriptUrl: docInfo.downloadUrl
-    });
+    }, req.user);
 
     res.json({
       success: true,
@@ -248,7 +287,7 @@ router.post("/:id/transcript/generate", async (req, res) => {
 });
 
 // POST /api/candidates/:id/recording or POST /api/candidates/recording - Save and finalize audio recording
-router.post(["/:id/recording", "/recording"], audioUpload.single("audio"), async (req, res) => {
+router.post(["/:id/recording", "/recording"], optionalAuth, audioUpload.single("audio"), async (req, res) => {
   try {
     const candidateId = req.params.id || req.body.candidateId || req.body.id || req.body.linkCode;
     if (!candidateId) {
@@ -293,12 +332,12 @@ router.post(["/:id/recording", "/recording"], audioUpload.single("audio"), async
   }
 });
 
-// GET /api/candidates/:id - get single candidate evaluation
-router.get("/:id", async (req, res) => {
+// GET /api/candidates/:id - get single candidate evaluation (IDOR protected)
+router.get("/:id", requireAuth, async (req, res) => {
   try {
-    const cand = await candidatesDb.getById(req.params.id);
+    const cand = await candidatesDb.getById(req.params.id, req.user);
     if (!cand) {
-      return res.status(404).json({ success: false, error: "Candidate evaluation not found" });
+      return res.status(404).json({ success: false, error: "Candidate evaluation not found or access denied" });
     }
     res.json({ success: true, data: cand });
   } catch (err) {
@@ -307,13 +346,13 @@ router.get("/:id", async (req, res) => {
 });
 
 // POST /api/candidates - create candidate evaluation
-router.post("/", async (req, res) => {
+router.post("/", requireAuth, async (req, res) => {
   try {
-    const authorEmail = req.body.createdBy || req.body.userEmail || req.headers["x-user-email"] || "";
     const newCand = await candidatesDb.create({
       ...req.body,
-      createdBy: authorEmail,
-      userEmail: authorEmail
+      userId: req.user.id,
+      createdBy: req.user.email,
+      userEmail: req.user.email
     });
 
     if (newCand && newCand.status === "Shortlisted") {
@@ -332,12 +371,12 @@ router.post("/", async (req, res) => {
   }
 });
 
-// PUT /api/candidates/:id - update candidate evaluation / status / notes
-router.put("/:id", async (req, res) => {
+// PUT /api/candidates/:id - update candidate evaluation (only permitted for owner)
+router.put("/:id", requireAuth, async (req, res) => {
   try {
-    const updated = await candidatesDb.update(req.params.id, req.body);
+    const updated = await candidatesDb.update(req.params.id, req.body, req.user);
     if (!updated) {
-      return res.status(404).json({ success: false, error: "Candidate not found" });
+      return res.status(404).json({ success: false, error: "Candidate not found or unauthorized to update" });
     }
 
     // Trigger Automated Email System
@@ -351,18 +390,31 @@ router.put("/:id", async (req, res) => {
       });
     }
 
+    // Trigger in-app notification
+    const notificationService = require("../services/notificationService");
+    const targetStatus = req.body.status || updated.status;
+    if (targetStatus && (targetStatus === "Selected" || targetStatus === "Rejected" || targetStatus === "Shortlisted")) {
+      notificationService.notifyCandidateDecision({
+        userEmail: req.user.email,
+        candidateName: updated.name,
+        role: updated.role,
+        status: targetStatus,
+        candidateId: updated.id
+      }).catch(e => console.warn("Notification error:", e.message));
+    }
+
     res.json({ success: true, data: updated, message: "Candidate evaluation updated" });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// DELETE /api/candidates/:id - delete candidate evaluation
-router.delete("/:id", async (req, res) => {
+// DELETE /api/candidates/:id - delete candidate evaluation (only permitted for owner)
+router.delete("/:id", requireAuth, async (req, res) => {
   try {
-    const deleted = await candidatesDb.delete(req.params.id);
+    const deleted = await candidatesDb.delete(req.params.id, req.user);
     if (!deleted) {
-      return res.status(404).json({ success: false, error: "Candidate not found" });
+      return res.status(404).json({ success: false, error: "Candidate not found or unauthorized to delete" });
     }
     res.json({ success: true, message: "Candidate evaluation deleted" });
   } catch (err) {
@@ -371,4 +423,3 @@ router.delete("/:id", async (req, res) => {
 });
 
 module.exports = router;
-

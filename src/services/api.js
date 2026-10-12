@@ -447,6 +447,24 @@ export const settingsApi = {
   deleteAccount: async (email) => {
     const res = await api.post("/users/delete-account", { email });
     return res.data;
+  },
+  getSessions: async (email) => {
+    const res = await api.get("/users/sessions", {
+      params: email ? { userEmail: email } : {}
+    });
+    return res.data.data || [];
+  },
+  revokeSession: async (sessionId, email) => {
+    const res = await api.delete(`/users/sessions/${encodeURIComponent(sessionId)}`, {
+      params: email ? { userEmail: email } : {}
+    });
+    return res.data;
+  },
+  revokeAllOtherSessions: async (email) => {
+    const res = await api.delete("/users/sessions/other", {
+      params: email ? { userEmail: email } : {}
+    });
+    return res.data;
   }
 };
 
@@ -520,4 +538,58 @@ export const candidatePortalApi = {
   }
 };
 
+export const notificationsApi = {
+  getAll: async (params = {}) => {
+    const res = await api.get("/notifications", { params });
+    return res.data;
+  },
+  getUnreadCount: async () => {
+    const res = await api.get("/notifications/unread-count");
+    return res.data?.unreadCount || 0;
+  },
+  markAsRead: async (id) => {
+    const res = await api.put(`/notifications/${encodeURIComponent(id)}/read`);
+    return res.data;
+  },
+  markAllAsRead: async () => {
+    const res = await api.put("/notifications/read-all");
+    return res.data;
+  },
+  delete: async (id) => {
+    const res = await api.delete(`/notifications/${encodeURIComponent(id)}`);
+    return res.data;
+  },
+  clearAll: async () => {
+    const res = await api.delete("/notifications");
+    return res.data;
+  }
+};
+
+export const profileApi = {
+  getProfile: async () => {
+    const res = await api.get("/users/profile");
+    return res.data?.data;
+  },
+  updateProfile: async (profileData) => {
+    const res = await api.put("/users/profile", profileData);
+    return res.data?.data;
+  },
+  uploadAvatar: async (formDataOrBase64) => {
+    let headers = {};
+    let payload = formDataOrBase64;
+    if (formDataOrBase64 instanceof FormData) {
+      headers["Content-Type"] = "multipart/form-data";
+    } else if (typeof formDataOrBase64 === "string") {
+      payload = { avatar: formDataOrBase64 };
+    }
+    const res = await api.post("/users/avatar", payload, { headers });
+    return res.data;
+  },
+  removeAvatar: async () => {
+    const res = await api.delete("/users/avatar");
+    return res.data;
+  }
+};
+
 export default api;
+

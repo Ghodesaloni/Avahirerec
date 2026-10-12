@@ -4,20 +4,27 @@ const interviewsDb = require("./interviewsDb");
 const candidatesDb = require("./candidatesDb");
 const emailCenterDb = require("./emailCenterDb");
 
-function matchesUser(item, targetEmail) {
-  if (!targetEmail) return false;
-  const target = targetEmail.toLowerCase().trim();
-  const createdBy = (item.createdBy || "").toLowerCase().trim();
-  const userEmail = (item.userEmail || "").toLowerCase().trim();
+function matchesUser(item, userRef) {
+  if (!userRef) return false;
+  const targetId = typeof userRef === "object" ? userRef.id : null;
+  const targetEmail = (typeof userRef === "object" ? (userRef.email || "") : String(userRef)).toLowerCase().trim();
 
-  // Strict email isolation: only return records belonging to this specific email login
-  return createdBy === target || userEmail === target;
+  const itemUserId = item.user_id !== undefined ? Number(item.user_id) : (item.userId !== undefined ? Number(item.userId) : null);
+  if (targetId && itemUserId && itemUserId === Number(targetId)) return true;
+
+  if (targetEmail) {
+    const createdBy = (item.createdBy || "").toLowerCase().trim();
+    const userEmail = (item.userEmail || "").toLowerCase().trim();
+    return createdBy === targetEmail || userEmail === targetEmail;
+  }
+  return false;
 }
 
 class DashboardDatabase {
-  async getStats(userEmail) {
-    const cleanEmail = (userEmail || "").toLowerCase().trim();
-    if (!cleanEmail) {
+  async getStats(userRef) {
+    const cleanEmail = (typeof userRef === "object" ? (userRef.email || "") : String(userRef || "")).toLowerCase().trim();
+    const targetUserId = typeof userRef === "object" && userRef.id ? Number(userRef.id) : null;
+    if (!cleanEmail && !targetUserId) {
       return {
         kpis: [
           { icon: "fa-briefcase", color: "bg-violet-100 text-violet-600", label: "Total Jobs", value: "0", sub: "0 Active Jobs", subColor: "text-slate-400" },
@@ -44,15 +51,17 @@ class DashboardDatabase {
       };
     }
 
-    let jobs = await (jobsDb.getAllAsync ? jobsDb.getAllAsync({ userEmail: cleanEmail }) : jobsDb.getAll({ userEmail: cleanEmail }));
-    let resumes = await (resumesDb.getAllAsync ? resumesDb.getAllAsync({ userEmail: cleanEmail }) : resumesDb.getAll({ userEmail: cleanEmail }));
-    let interviews = await interviewsDb.getAll({ userEmail: cleanEmail });
-    let candidates = await candidatesDb.getAll({ userEmail: cleanEmail });
+    const filter = { userId: targetUserId, userEmail: cleanEmail };
+    let jobs = await (jobsDb.getAllAsync ? jobsDb.getAllAsync(filter) : jobsDb.getAll(filter));
+    let resumes = await (resumesDb.getAllAsync ? resumesDb.getAllAsync(filter) : resumesDb.getAll(filter));
+    let interviews = await interviewsDb.getAll(filter);
+    let candidates = await candidatesDb.getAll(filter);
 
-    jobs = jobs.filter(j => matchesUser(j, cleanEmail));
-    resumes = resumes.filter(r => matchesUser(r, cleanEmail));
-    interviews = interviews.filter(i => matchesUser(i, cleanEmail));
-    candidates = candidates.filter(c => matchesUser(c, cleanEmail));
+    const userCtx = { id: targetUserId, email: cleanEmail };
+    jobs = jobs.filter(j => matchesUser(j, userCtx));
+    resumes = resumes.filter(r => matchesUser(r, userCtx));
+    interviews = interviews.filter(i => matchesUser(i, userCtx));
+    candidates = candidates.filter(c => matchesUser(c, userCtx));
 
     const activeJobs = jobs.filter(j => (j.status || "").toLowerCase() === "active").length;
     const selectedCandidates = candidates.filter(c => (c.status || "").toLowerCase() === "selected").length +

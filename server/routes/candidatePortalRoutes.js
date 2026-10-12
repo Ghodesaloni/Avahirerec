@@ -238,11 +238,17 @@ function getCandidateScheduleTiming(scheduledInterview) {
   let timingMessage = "";
   let timingBadge = "Scheduled Slot";
 
+  const ivSettings = settingsDb.getInterviewSettings(scheduledInterview?.userEmail || scheduledInterview?.createdBy);
+  const joinWindowMatch = String(ivSettings?.joinWindow || "5").match(/(\d+)/);
+  const joinWindowMins = joinWindowMatch ? parseInt(joinWindowMatch[1], 10) : 5;
+  const graceMatch = String(ivSettings?.graceTime || "2").match(/(\d+)/);
+  const graceTimeMins = graceMatch ? parseInt(graceMatch[1], 10) : 2;
+
   if (parsedDate && !isNaN(parsedDate.getTime())) {
-    windowStart = new Date(parsedDate.getTime() - 30 * 60 * 1000); // 30 minutes before
+    windowStart = new Date(parsedDate.getTime() - joinWindowMins * 60 * 1000); // join window prior to start
     windowEnd = new Date(parsedDate.getTime() + (durationMins + 30) * 60 * 1000); // duration + 30 mins
-    // Strict 5-minute rule: Candidate must join within 5 minutes of scheduled start time
-    joinExpiryTime = new Date(parsedDate.getTime() + 5 * 60 * 1000);
+    // Configured grace period: Candidate must join within graceTimeMins of scheduled start time
+    joinExpiryTime = new Date(parsedDate.getTime() + graceTimeMins * 60 * 1000);
 
     diffMinutes = Math.round((parsedDate.getTime() - now.getTime()) / (60 * 1000));
 
@@ -254,12 +260,12 @@ function getCandidateScheduleTiming(scheduledInterview) {
       timingBadge = "In Progress";
       timingMessage = `Interview session is currently active.`;
     } else if (now > joinExpiryTime) {
-      // Exceeded 5 minutes from scheduled start time without joining
+      // Exceeded grace period from scheduled start time without joining
       isPast = true;
       isExpired = true;
       isWindowActive = false;
-      timingBadge = "Link Expired (5m Window Exceeded)";
-      timingMessage = `This interview link has expired. Candidates must click 'Join Interview' within 5 minutes of their scheduled time (${scheduledInterview.date} at ${scheduledInterview.time}). Please contact HR to reschedule.`;
+      timingBadge = `Link Expired (${graceTimeMins}m Grace Exceeded)`;
+      timingMessage = `This interview link has expired. Candidates must click 'Join Interview' within ${graceTimeMins} minutes of their scheduled time (${scheduledInterview.date} at ${scheduledInterview.time}). Please contact HR to reschedule.`;
     } else if (now < windowStart) {
       isUpcoming = true;
       isWindowActive = false;
@@ -267,11 +273,11 @@ function getCandidateScheduleTiming(scheduledInterview) {
       const mins = diffMinutes % 60;
       const timeRemainingStr = hours > 0 ? `${hours} hr ${mins} min` : `${mins} min`;
       timingBadge = `Upcoming (${timeRemainingStr})`;
-      timingMessage = `Your interview is scheduled for ${scheduledInterview.date} at ${scheduledInterview.time}. Entry portal opens 30 minutes prior to your slot. Candidate entry window begins in ${timeRemainingStr}.`;
+      timingMessage = `Your interview is scheduled for ${scheduledInterview.date} at ${scheduledInterview.time}. Entry portal opens ${joinWindowMins} minutes prior to your slot. Candidate entry window begins in ${timeRemainingStr}.`;
     } else {
       isWindowActive = true;
       timingBadge = "Entry Open Now";
-      timingMessage = `Your scheduled interview slot is ACTIVE right now (${scheduledInterview.date} at ${scheduledInterview.time}). Please join within 5 minutes of your scheduled start time.`;
+      timingMessage = `Your scheduled interview slot is ACTIVE right now (${scheduledInterview.date} at ${scheduledInterview.time}). Please join within ${graceTimeMins} minutes grace period.`;
     }
   } else {
     timingMessage = `Interview scheduled for ${scheduledInterview.date || "Assigned Date"} at ${scheduledInterview.time || "Assigned Slot"}.`;
@@ -497,9 +503,16 @@ router.get("/session/:linkCode", async (req, res) => {
 });
 
 // GET /api/candidate-portal/interview-settings - Candidate-accessible interview & proctoring configuration
-router.get("/interview-settings", (req, res) => {
+router.get("/interview-settings", async (req, res) => {
   try {
-    const settings = settingsDb.getInterviewSettings();
+    let userEmail = req.query.userEmail || req.headers["x-user-email"];
+    if (!userEmail && req.query.linkCode) {
+      const scheduled = await interviewsDb.getByLinkCode(req.query.linkCode);
+      if (scheduled && (scheduled.userEmail || scheduled.createdBy)) {
+        userEmail = scheduled.userEmail || scheduled.createdBy;
+      }
+    }
+    const settings = await settingsDb.getInterviewSettingsAsync(userEmail);
     res.json({ success: true, data: settings });
   } catch (err) {
     console.error("Error retrieving interview settings for candidate portal:", err);
@@ -997,6 +1010,18 @@ router.post("/complete", async (req, res) => {
     // Deep sync to HR Portal backend
     const hrCandidate = await syncSessionToHRPorizontal(completedSession, req.headers["x-user-email"], evaluation);
 
+    // In-app Notification Trigger
+    const notificationService = require("../services/notificationService");
+    const targetRecruiter = hrCandidate?.userEmail || hrCandidate?.createdBy || req.headers["x-user-email"] || "hr@avahire.ai";
+    notificationService.notifyInterviewCompleted({
+      userEmail: targetRecruiter,
+      candidateName: completedSession.candidateName,
+      role: completedSession.role,
+      score: evaluation.overallScore,
+      sessionId: completedSession.id,
+      linkCode: code
+    }).catch(e => console.warn("Notification error:", e.message));
+
     res.json({
       success: true,
       message: "Interview finalized and synchronized with HR Evaluation Portal",
@@ -1114,6 +1139,46 @@ router.post("/proctoring/violation", async (req, res) => {
 
     const rawCode = (linkCode || "").replace(/^interview_/, "").trim();
     const type = String(violationType || "").toLowerCase().trim();
+
+    // Check effective interview settings for this interview / recruiter
+    let recruiterEmail = req.headers["x-user-email"] || null;
+    if (!recruiterEmail && rawCode) {
+      const scheduled = await interviewsDb.getByLinkCode(rawCode);
+      const sessionData = await candidateSessionsDb.getByLinkCode(rawCode);
+      recruiterEmail = scheduled?.recruiterEmail || scheduled?.createdBy || sessionData?.recruiterEmail || null;
+    }
+    const ivSettings = await settingsDb.getInterviewSettingsAsync(recruiterEmail);
+
+    if (ivSettings.enableProctoring === false) {
+      const currentCount = await proctoringDb.getWarningCount(rawCode);
+      return res.json({
+        success: true,
+        action: "disabled",
+        terminate: false,
+        warningCount: currentCount,
+        message: "Proctoring is disabled in interview settings."
+      });
+    }
+
+    if ((type === "face_not_visible" || type === "poor_lighting" || type === "low_lighting" || type === "face_missing") && ivSettings.faceDetection === false) {
+      const currentCount = await proctoringDb.getWarningCount(rawCode);
+      return res.json({ success: true, action: "disabled", terminate: false, warningCount: currentCount });
+    }
+
+    if ((type === "multiple_people" || type === "multiple_faces" || type === "extra_person") && ivSettings.multiplePersonDetection === false) {
+      const currentCount = await proctoringDb.getWarningCount(rawCode);
+      return res.json({ success: true, action: "disabled", terminate: false, warningCount: currentCount });
+    }
+
+    if ((type === "tab_switch" || type === "tab_change" || type === "window_blur" || type === "window_change" || type === "window_switch" || type === "multiple_windows" || type === "split_screen" || type === "visibility_hidden" || type === "focus_lost" || type === "screen_switch") && ivSettings.tabSwitchDetection === false) {
+      const currentCount = await proctoringDb.getWarningCount(rawCode);
+      return res.json({ success: true, action: "disabled", terminate: false, warningCount: currentCount });
+    }
+
+    if (type === "fullscreen_exit" && ivSettings.fullScreenMonitoring === false) {
+      const currentCount = await proctoringDb.getWarningCount(rawCode);
+      return res.json({ success: true, action: "disabled", terminate: false, warningCount: currentCount });
+    }
 
     // 1. Guidance Notices (Zero warnings, non-terminating guidance)
     // A. Face visibility & lighting check

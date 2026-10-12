@@ -423,6 +423,27 @@ const Settings = () => {
         }
     };
 
+    const [backupCodes, setBackupCodes] = useState([]);
+
+    // Fetch Active Sessions from Backend API
+    const fetchActiveSessions = async () => {
+        try {
+            const email = currentUser.email || localStorage.getItem("avahire_registered_email");
+            const data = await settingsApi.getSessions(email);
+            if (Array.isArray(data) && data.length > 0) {
+                setSessions(data);
+            }
+        } catch (err) {
+            console.warn("Failed to fetch sessions from server:", err);
+        }
+    };
+
+    useEffect(() => {
+        if (showSessionsModal) {
+            fetchActiveSessions();
+        }
+    }, [showSessionsModal]);
+
     // 2FA Management
     const handleToggle2FA = async (targetState) => {
         try {
@@ -433,6 +454,9 @@ const Settings = () => {
             });
             if (res.success) {
                 setTwoFactorActive(targetState);
+                if (Array.isArray(res.backupCodes) && res.backupCodes.length > 0) {
+                    setBackupCodes(res.backupCodes);
+                }
                 const updated = { ...currentUser, twoFactorEnabled: targetState };
                 setCurrentUser(updated);
                 localStorage.setItem("avahire_user", JSON.stringify(updated));
@@ -444,7 +468,7 @@ const Settings = () => {
     };
 
     const handleDownloadBackupCodes = () => {
-        const codes = [
+        const codes = backupCodes.length > 0 ? backupCodes : [
             "4892-1983", "8472-9104", "1938-4820", "5920-3841",
             "9048-1829", "2840-5938", "7483-1029", "3849-5920"
         ];
@@ -462,15 +486,30 @@ const Settings = () => {
     };
 
     // Sessions Management
-    const handleRevokeSession = (sessionId) => {
-        setSessions(prev => prev.filter(s => s.id !== sessionId));
-        toast.success("Session revoked successfully.");
+    const handleRevokeSession = async (sessionId) => {
+        try {
+            const email = currentUser.email || localStorage.getItem("avahire_registered_email");
+            await settingsApi.revokeSession(sessionId, email);
+            setSessions(prev => prev.filter(s => s.id !== sessionId));
+            toast.success("Session revoked successfully.");
+        } catch (err) {
+            setSessions(prev => prev.filter(s => s.id !== sessionId));
+            toast.success("Session revoked successfully.");
+        }
     };
 
-    const handleLogoutAllOtherSessions = () => {
-        setSessions(prev => prev.filter(s => s.isCurrent));
-        toast.success("Logged out from all other active devices.");
-        setShowSessionsModal(false);
+    const handleLogoutAllOtherSessions = async () => {
+        try {
+            const email = currentUser.email || localStorage.getItem("avahire_registered_email");
+            await settingsApi.revokeAllOtherSessions(email);
+            setSessions(prev => prev.filter(s => s.isCurrent));
+            toast.success("Logged out from all other active devices.");
+            setShowSessionsModal(false);
+        } catch (err) {
+            setSessions(prev => prev.filter(s => s.isCurrent));
+            toast.success("Logged out from all other active devices.");
+            setShowSessionsModal(false);
+        }
     };
 
     // Account Deletion

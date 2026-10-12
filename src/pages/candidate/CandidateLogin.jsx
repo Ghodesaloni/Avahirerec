@@ -284,35 +284,6 @@ const CandidateLogin = () => {
                                 </div>
                             </div>
 
-                            {/* Submitted Resumes Quick Selector (Connected to All Resumes) */}
-                            {resumesList.length > 0 && (
-                                <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3 space-y-2 text-left">
-                                    <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
-                                        <span className="flex items-center gap-1.5 text-slate-800 font-bold">
-                                            <FileText className="w-3.5 h-3.5 text-violet-600" />
-                                            <span>Submitted Resumes ({resumesList.length})</span>
-                                        </span>
-                                        <span className="text-[10px] text-violet-600 font-medium bg-violet-50 px-2 py-0.5 rounded-full border border-violet-200">
-                                            Auto-Fill Helper
-                                        </span>
-                                    </div>
-                                    <select
-                                        onChange={(e) => {
-                                            const selected = resumesList.find(r => r.id === e.target.value);
-                                            handleSelectResumeCandidate(selected);
-                                        }}
-                                        defaultValue=""
-                                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:border-violet-500 cursor-pointer shadow-2xs"
-                                    >
-                                        <option value="" disabled>-- Select from Submitted Resumes to Test/Fill --</option>
-                                        {resumesList.map((r) => (
-                                            <option key={r.id} value={r.id}>
-                                                {r.name} · {r.email} ({r.phone || "No phone"}) · {r.role} {r.interviewSchedule ? `[Interview: ${r.interviewSchedule.date} ${r.interviewSchedule.time}]` : "[No Interview]"}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
-                            )}
 
                             {/* Error Alert Box */}
                             {loginError && (
@@ -339,7 +310,7 @@ const CandidateLogin = () => {
                                         <input
                                             type="email"
                                             required
-                                            placeholder="e.g. snehal.harde2935@gmail.com"
+                                            placeholder="e.g. ABC@example.com"
                                             value={email}
                                             onChange={(e) => {
                                                 setEmail(e.target.value);
@@ -362,7 +333,7 @@ const CandidateLogin = () => {
                                         <input
                                             type="tel"
                                             required
-                                            placeholder="e.g. +91-8999646955"
+                                            placeholder="e.g. +91-xxxxxxxxxx"
                                             value={phone}
                                             onChange={(e) => {
                                                 setPhone(e.target.value);

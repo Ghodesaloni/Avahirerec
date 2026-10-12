@@ -4,8 +4,7 @@ const path = require("path");
 const fs = require("fs");
 const candidatesDb = require("../db/candidatesDb");
 const excelReportService = require("../services/excelReportService");
-const recordingStorageService = require("../services/recordingStorageService");
-const transcriptDocService = require("../services/transcriptDocService");
+const { requireAuth } = require("../middleware/authMiddleware");
 
 /**
  * Helper to construct base URL from request for absolute download links in Excel
@@ -16,18 +15,17 @@ function getRequestBaseUrl(req) {
   return `${protocol}://${host}`;
 }
 
-/**
- * Extract active user email from query param or header for per-account separation
- */
-function getUserEmail(req) {
-  return (req.query.userEmail || req.headers["x-user-email"] || "").toLowerCase().trim();
+function getUserAccountSlug(user) {
+  if (!user) return "global";
+  const safeEmail = (user.email || "").toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+  return `${user.id || 1}_${safeEmail}`;
 }
 
-// GET /api/reports/summary - Overview stats for HR Reports section (scoped per account)
-router.get("/summary", async (req, res) => {
+// GET /api/reports/summary - Overview stats for HR Reports section (strictly scoped per account)
+router.get("/summary", requireAuth, async (req, res) => {
   try {
-    const userEmail = getUserEmail(req);
-    const candidates = await candidatesDb.getAll(userEmail ? { userEmail } : {});
+    const accountSlug = getUserAccountSlug(req.user);
+    const candidates = await candidatesDb.getAll({ userId: req.user.id, userEmail: req.user.email });
     const selected = candidates.filter(c => c && c.status === "Selected");
     const datesSummary = excelReportService.getAvailableDatesSummary(candidates);
     const todayKey = excelReportService.formatDateKey(new Date());
@@ -36,7 +34,7 @@ router.get("/summary", async (req, res) => {
     res.json({
       success: true,
       data: {
-        accountEmail: userEmail || "All Accounts",
+        accountEmail: req.user.email,
         totalSelected: selected.length,
         todayDateKey: todayKey,
         todayDisplayDate: excelReportService.formatDisplayDate(new Date()),
@@ -52,14 +50,13 @@ router.get("/summary", async (req, res) => {
 });
 
 // GET /api/reports/selected-candidates/dates - List all report dates with candidate counts
-router.get("/selected-candidates/dates", async (req, res) => {
+router.get("/selected-candidates/dates", requireAuth, async (req, res) => {
   try {
-    const userEmail = getUserEmail(req);
-    const candidates = await candidatesDb.getAll(userEmail ? { userEmail } : {});
+    const candidates = await candidatesDb.getAll({ userId: req.user.id, userEmail: req.user.email });
     const datesSummary = excelReportService.getAvailableDatesSummary(candidates);
     res.json({
       success: true,
-      accountEmail: userEmail || "All Accounts",
+      accountEmail: req.user.email,
       count: datesSummary.length,
       data: datesSummary
     });
@@ -70,14 +67,14 @@ router.get("/selected-candidates/dates", async (req, res) => {
 });
 
 // GET /api/reports/selected-candidates/today - Download or view today's selected candidates report
-router.get("/selected-candidates/today", async (req, res) => {
+router.get("/selected-candidates/today", requireAuth, async (req, res) => {
   try {
-    const userEmail = getUserEmail(req);
+    const accountSlug = getUserAccountSlug(req.user);
     const todayKey = excelReportService.formatDateKey(new Date());
-    const candidates = await candidatesDb.getAll(userEmail ? { userEmail } : {});
+    const candidates = await candidatesDb.getAll({ userId: req.user.id, userEmail: req.user.email });
     const baseUrl = getRequestBaseUrl(req);
 
-    const report = await excelReportService.generateDailyReport(todayKey, candidates, baseUrl, userEmail);
+    const report = await excelReportService.generateDailyReport(todayKey, candidates, baseUrl, accountSlug);
 
     // If caller requests JSON metadata instead of binary download
     if (req.query.format === "json") {
@@ -87,12 +84,12 @@ router.get("/selected-candidates/today", async (req, res) => {
       });
       return res.json({
         success: true,
-        accountEmail: userEmail || "All Accounts",
+        accountEmail: req.user.email,
         reportDate: todayKey,
         displayDate: report.displayDate,
         candidateCount: report.candidateCount,
         filename: report.filename,
-        downloadUrl: `/api/reports/selected-candidates/today?download=true${userEmail ? `&userEmail=${encodeURIComponent(userEmail)}` : ""}`,
+        downloadUrl: `/api/reports/selected-candidates/today?download=true`,
         candidates: todayCandidates
       });
     }
@@ -114,16 +111,16 @@ router.get("/selected-candidates/today", async (req, res) => {
 });
 
 // GET /api/reports/selected-candidates/date/:date - Download selected candidates report for specific date
-router.get("/selected-candidates/date/:date", async (req, res) => {
+router.get("/selected-candidates/date/:date", requireAuth, async (req, res) => {
   try {
-    const userEmail = getUserEmail(req);
+    const accountSlug = getUserAccountSlug(req.user);
     const rawDate = req.params.date;
     const norm = excelReportService.normalizeDateInfo(rawDate);
     const dateKey = norm.key;
-    const candidates = await candidatesDb.getAll(userEmail ? { userEmail } : {});
+    const candidates = await candidatesDb.getAll({ userId: req.user.id, userEmail: req.user.email });
     const baseUrl = getRequestBaseUrl(req);
 
-    const report = await excelReportService.generateDailyReport(dateKey, candidates, baseUrl, userEmail);
+    const report = await excelReportService.generateDailyReport(dateKey, candidates, baseUrl, accountSlug);
 
     if (req.query.format === "json") {
       const dateCandidates = candidates.filter(c => {
@@ -132,12 +129,12 @@ router.get("/selected-candidates/date/:date", async (req, res) => {
       });
       return res.json({
         success: true,
-        accountEmail: userEmail || "All Accounts",
+        accountEmail: req.user.email,
         reportDate: dateKey,
         displayDate: report.displayDate,
         candidateCount: report.candidateCount,
         filename: report.filename,
-        downloadUrl: `/api/reports/selected-candidates/date/${dateKey}${userEmail ? `?userEmail=${encodeURIComponent(userEmail)}` : ""}`,
+        downloadUrl: `/api/reports/selected-candidates/date/${dateKey}`,
         candidates: dateCandidates
       });
     }
@@ -159,23 +156,23 @@ router.get("/selected-candidates/date/:date", async (req, res) => {
 });
 
 // GET /api/reports/selected-candidates/all - Download complete master report for all dates
-router.get("/selected-candidates/all", async (req, res) => {
+router.get("/selected-candidates/all", requireAuth, async (req, res) => {
   try {
-    const userEmail = getUserEmail(req);
-    const candidates = await candidatesDb.getAll(userEmail ? { userEmail } : {});
+    const accountSlug = getUserAccountSlug(req.user);
+    const candidates = await candidatesDb.getAll({ userId: req.user.id, userEmail: req.user.email });
     const baseUrl = getRequestBaseUrl(req);
 
-    const report = await excelReportService.generateAllDatesReport(candidates, baseUrl, userEmail);
+    const report = await excelReportService.generateAllDatesReport(candidates, baseUrl, accountSlug);
 
     if (req.query.format === "json") {
       const selected = candidates.filter(c => c.status === "Selected");
       return res.json({
         success: true,
-        accountEmail: userEmail || "All Accounts",
+        accountEmail: req.user.email,
         reportDate: "all",
         candidateCount: report.candidateCount,
         filename: report.filename,
-        downloadUrl: `/api/reports/selected-candidates/all${userEmail ? `?userEmail=${encodeURIComponent(userEmail)}` : ""}`,
+        downloadUrl: `/api/reports/selected-candidates/all`,
         candidates: selected
       });
     }
@@ -197,16 +194,16 @@ router.get("/selected-candidates/all", async (req, res) => {
 });
 
 // POST /api/reports/regenerate - Force regenerate all Excel reports from database records
-router.post("/regenerate", async (req, res) => {
+router.post("/regenerate", requireAuth, async (req, res) => {
   try {
-    const userEmail = getUserEmail(req);
-    const candidates = await candidatesDb.getAll(userEmail ? { userEmail } : {});
+    const accountSlug = getUserAccountSlug(req.user);
+    const candidates = await candidatesDb.getAll({ userId: req.user.id, userEmail: req.user.email });
     const baseUrl = getRequestBaseUrl(req);
-    const reports = await excelReportService.syncAllReports(candidates, baseUrl, userEmail);
+    const reports = await excelReportService.syncAllReports(candidates, baseUrl, accountSlug);
 
     res.json({
       success: true,
-      accountEmail: userEmail || "All Accounts",
+      accountEmail: req.user.email,
       message: `Successfully regenerated ${reports.length} report files for account`,
       data: reports
     });

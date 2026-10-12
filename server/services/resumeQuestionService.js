@@ -144,75 +144,143 @@ function normalizeCandidateProjects(candidate = {}) {
 }
 
 /**
- * Generate deep, contextual interview questions based on candidate's verified resume
+ * Generate deep, contextual interview questions based on candidate's verified resume and interview settings
  */
-function generateResumeBasedQuestions(candidate = {}, role = "Software Engineer", projects = []) {
+function generateResumeBasedQuestions(candidate = {}, role = "Software Engineer", projects = [], ivSettings = {}) {
   const candidateName = candidate.name || candidate.candidateName || "Candidate";
   const candidateRole = role || candidate.role || candidate.targetJobTitle || "Software Engineer";
   const skills = candidate.allSkills || candidate.skills || [];
   const skillsStr = skills.length > 0 ? skills.slice(0, 4).join(", ") : "software architecture and coding";
   const questions = [];
 
+  const resumeQuestionsEnabled = ivSettings.resumeBasedQuestions !== false;
+  const roleQuestionsEnabled = ivSettings.roleBasedQuestions !== false;
+  const difficulty = (ivSettings.difficulty || "Medium").toLowerCase();
+
   // 1. Initial warm-up & background question
   questions.push(
     `Welcome ${candidateName}! Could you please introduce yourself and walk us through your technical journey in ${candidateRole}?`
   );
 
-  // 2. Project-Specific Questions (Motivation, Architecture, Technical Hurdle, Scalability)
-  if (projects && projects.length > 0) {
-    projects.forEach((proj, idx) => {
-      const projTitle = proj.title || `Project ${idx + 1}`;
-      const techList = proj.technologies && proj.technologies.length > 0 ? proj.technologies.join(", ") : "";
-      const techPhrase = techList ? ` utilizing ${techList}` : "";
+  // 2. Project-Specific Questions from Resume (if resumeBasedQuestions enabled)
+  if (resumeQuestionsEnabled) {
+    if (projects && projects.length > 0) {
+      projects.forEach((proj, idx) => {
+        const projTitle = proj.title || `Project ${idx + 1}`;
+        const techList = proj.technologies && proj.technologies.length > 0 ? proj.technologies.join(", ") : "";
+        const techPhrase = techList ? ` utilizing ${techList}` : "";
 
-      // Question: Motivation behind the project (e.g. Smart House, AI system, etc.)
+        if (difficulty === "easy") {
+          questions.push(
+            `In ${projTitle}${techPhrase}, what was your specific role, and what core features did you personally implement?`
+          );
+          questions.push(
+            `What libraries or frameworks did you choose for ${projTitle}, and what was straightforward or simple to work with?`
+          );
+        } else if (difficulty === "hard") {
+          questions.push(
+            `In ${projTitle}${techPhrase}, walk me through the end-to-end data flow, distributed components, and how you ensured low latency and high availability under load.`
+          );
+          questions.push(
+            `What was the most severe architectural constraint or race condition you encountered while scaling ${projTitle}, and how did you resolve it?`
+          );
+        } else {
+          // Medium (default)
+          questions.push(
+            `I can see on your resume that you created ${projTitle}${techPhrase}. Please explain your motivation behind this idea and what core problem you set out to solve?`
+          );
+          questions.push(
+            `In ${projTitle}, walk me through the system architecture and key technical design decisions you made during development.`
+          );
+          questions.push(
+            `What was the most challenging bug or technical hurdle you encountered while building ${projTitle}, and how did you resolve it?`
+          );
+        }
+      });
+    } else {
       questions.push(
-        `I can see on your resume that you created ${projTitle}${techPhrase}. Please explain your motivation behind this idea and what core problem you set out to solve?`
+        `I can see you have experience with ${skillsStr}. Could you share a major project or technical system you designed from scratch, explaining your motivation and approach?`
       );
+    }
+  }
 
-      // Question: Technical architecture and implementation
+  // 3. Role & JD-Based Technical Questions (if roleBasedQuestions enabled)
+  if (roleQuestionsEnabled) {
+    if (difficulty === "easy") {
+      if (skills.some(s => /react|vue|angular|frontend|ui/i.test(s))) {
+        questions.push(
+          `Can you explain the difference between state and props, and how you manage user input in web components?`
+        );
+      }
+      if (skills.some(s => /node|express|backend|python|django|fastapi|java|spring/i.test(s))) {
+        questions.push(
+          `How do you set up basic API routing, handle HTTP request errors, and structure a backend service?`
+        );
+      }
+      if (skills.some(s => /ml|ai|machine learning|data science|tensorflow|pytorch/i.test(s))) {
+        questions.push(
+          `Can you describe the basic differences between supervised and unsupervised learning, and how you prepare training data?`
+        );
+      }
+      if (skills.some(s => /docker|kubernetes|aws|cloud|devops|ci\/cd/i.test(s))) {
+        questions.push(
+          `What are containers used for, and how do you write a simple Dockerfile for a web application?`
+        );
+      }
       questions.push(
-        `In ${projTitle}, walk me through the system architecture and key technical design decisions you made during development.`
+        `What is your approach to writing clean, readable code and commenting your work for team members?`
       );
-
-      // Question: Challenging technical roadblock
+    } else if (difficulty === "hard") {
+      if (skills.some(s => /react|vue|angular|frontend|ui/i.test(s))) {
+        questions.push(
+          `How do you optimize virtual DOM diffing, handle micro-frontend orchestration, and debug complex memory leaks in single-page applications?`
+        );
+      }
+      if (skills.some(s => /node|express|backend|python|django|fastapi|java|spring/i.test(s))) {
+        questions.push(
+          `How do you implement distributed locking, idempotent API requests, database sharding, and ACID transaction boundaries across microservices?`
+        );
+      }
+      if (skills.some(s => /ml|ai|machine learning|data science|tensorflow|pytorch/i.test(s))) {
+        questions.push(
+          `How do you optimize deep learning model quantization, batching strategies for GPU memory constraints, and mitigate covariate shift in production pipelines?`
+        );
+      }
+      if (skills.some(s => /docker|kubernetes|aws|cloud|devops|ci\/cd/i.test(s))) {
+        questions.push(
+          `How do you architect multi-region Kubernetes clusters with service meshes (Istio), automated canary rollouts, and disaster recovery failover?`
+        );
+      }
       questions.push(
-        `What was the most challenging bug or technical hurdle you encountered while building ${projTitle}, and how did you resolve it?`
+        `How do you design an end-to-end chaos engineering and observability strategy using distributed tracing, metrics, and automated alert remediation?`
       );
-    });
-  } else {
-    // If candidate has no explicit project listed, probe high impact systems
-    questions.push(
-      `I can see you have experience with ${skillsStr}. Could you share a major project or technical system you designed from scratch, explaining your motivation and approach?`
-    );
+    } else {
+      // Medium
+      if (skills.some(s => /react|vue|angular|frontend|ui/i.test(s))) {
+        questions.push(
+          `How do you handle client-side state management, performance rendering bottlenecks, and component reusability in large web applications?`
+        );
+      }
+      if (skills.some(s => /node|express|backend|python|django|fastapi|java|spring/i.test(s))) {
+        questions.push(
+          `How do you design secure, scalable RESTful or real-time APIs, and manage database connection pooling and query optimization?`
+        );
+      }
+      if (skills.some(s => /ml|ai|machine learning|data science|tensorflow|pytorch/i.test(s))) {
+        questions.push(
+          `How do you evaluate your machine learning models to prevent overfitting and ensure real-time inference latency meets production standards?`
+        );
+      }
+      if (skills.some(s => /docker|kubernetes|aws|cloud|devops|ci\/cd/i.test(s))) {
+        questions.push(
+          `How do you ensure zero-downtime deployments, container orchestration, and comprehensive monitoring across distributed environments?`
+        );
+      }
+      questions.push(
+        `How do you approach automated unit testing, CI/CD pipelines, and code reviews to maintain high software quality?`
+      );
+    }
   }
-
-  // 3. Technical Depth & System Design based on skills & role
-  if (skills.some(s => /react|vue|angular|frontend|ui/i.test(s))) {
-    questions.push(
-      `How do you handle client-side state management, performance rendering bottlenecks, and component reusability in large web applications?`
-    );
-  }
-  if (skills.some(s => /node|express|backend|python|django|fastapi|java|spring/i.test(s))) {
-    questions.push(
-      `How do you design secure, scalable RESTful or real-time APIs, and manage database connection pooling and query optimization?`
-    );
-  }
-  if (skills.some(s => /ml|ai|machine learning|data science|tensorflow|pytorch/i.test(s))) {
-    questions.push(
-      `How do you evaluate your machine learning models to prevent overfitting and ensure real-time inference latency meets production standards?`
-    );
-  }
-  if (skills.some(s => /docker|kubernetes|aws|cloud|devops|ci\/cd/i.test(s))) {
-    questions.push(
-      `How do you ensure zero-downtime deployments, container orchestration, and comprehensive monitoring across distributed environments?`
-    );
-  }
-
-  // 4. Engineering Best Practices & Quality
-  questions.push(
-    `How do you approach automated unit testing, CI/CD pipelines, and code reviews to maintain high software quality?`
-  );
 
   return questions;
 }
@@ -220,7 +288,7 @@ function generateResumeBasedQuestions(candidate = {}, role = "Software Engineer"
 /**
  * Build a complete structured Resume Analysis & Context object for the AI Agent
  */
-function analyzeCandidateResumeForAgent(candidate = {}, scheduledInterview = null) {
+function analyzeCandidateResumeForAgent(candidate = {}, scheduledInterview = null, ivSettings = {}) {
   const candidateName = candidate.name || candidate.candidateName || scheduledInterview?.name || "Candidate";
   const candidateRole = candidate.role || candidate.targetJobTitle || scheduledInterview?.role || "Software Engineer";
   const candidateEmail = candidate.email || candidate.candidateEmail || scheduledInterview?.email || "";
@@ -243,8 +311,8 @@ function analyzeCandidateResumeForAgent(candidate = {}, scheduledInterview = nul
   // Extract and normalize projects
   const projects = normalizeCandidateProjects(candidate);
 
-  // Generate resume-tailored questions
-  const generatedQuestions = generateResumeBasedQuestions(candidate, candidateRole, projects);
+  // Generate resume-tailored questions with interview settings
+  const generatedQuestions = generateResumeBasedQuestions(candidate, candidateRole, projects, ivSettings);
 
   // Formulate project highlights text for AI system prompt
   const projectHighlights = projects.map((p, idx) => {

@@ -269,6 +269,29 @@ const Jobs = () => {
     const [uploadedDocName, setUploadedDocName] = useState("");
     const fileInputRef = useRef(null);
 
+    const [preferences, setPreferences] = useState(() => {
+        try {
+            const saved = localStorage.getItem("avahire_settings_preferences");
+            return saved ? JSON.parse(saved) : { jobsPerPage: "10", compactView: true };
+        } catch {
+            return { jobsPerPage: "10", compactView: true };
+        }
+    });
+    const [currentPage, setCurrentPage] = useState(1);
+
+    useEffect(() => {
+        const handlePrefUpdate = (e) => {
+            if (e.detail) {
+                setPreferences(e.detail);
+                if (e.detail.jobsPerPage) {
+                    setCurrentPage(1);
+                }
+            }
+        };
+        window.addEventListener("avahire_preferences_updated", handlePrefUpdate);
+        return () => window.removeEventListener("avahire_preferences_updated", handlePrefUpdate);
+    }, []);
+
     useEffect(() => {
         const loadJobs = async () => {
             try {
@@ -317,6 +340,10 @@ const Jobs = () => {
             (Array.isArray(j.keySkills) && j.keySkills.some(skill => skill && skill.toLowerCase().includes(q.toLowerCase())))
         );
     });
+
+    const pageSize = Number(preferences.jobsPerPage) || 10;
+    const totalPages = Math.ceil(filtered.length / pageSize) || 1;
+    const paginatedJobs = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
     const handleAddSkill = (skillToAdd) => {
         const trimmed = (skillToAdd || skillInput).trim();
@@ -540,107 +567,137 @@ const Jobs = () => {
                     )}
                 </div>
             ) : (
-                <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">
-                    {filtered.map((j) => (
-                        <div key={j.id} data-testid={`job-card-${j.id}`} className="bg-white rounded-2xl border border-slate-100 p-6 card-hover flex flex-col justify-between shadow-xs">
-                            <div>
-                                <div className="flex items-start justify-between gap-2">
-                                    <div>
-                                        <div className="text-lg font-bold text-slate-900 tracking-tight leading-snug">{j.title}</div>
-                                        <div className="text-xs font-semibold text-violet-600 mt-1 flex items-center gap-1.5">
-                                            <Building2 className="w-3.5 h-3.5" />
-                                            <span>{j.dept}</span>
-                                            {j.jobLevel && (
-                                                <>
-                                                    <span className="text-slate-300">•</span>
-                                                    <span className="text-slate-500 font-medium">{j.jobLevel}</span>
-                                                </>
+                <div className="space-y-6">
+                    <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">
+                        {paginatedJobs.map((j) => (
+                            <div key={j.id} data-testid={`job-card-${j.id}`} className={`bg-white rounded-2xl border border-slate-100 ${preferences.compactView ? "p-4.5" : "p-6"} card-hover flex flex-col justify-between shadow-xs`}>
+                                <div>
+                                    <div className="flex items-start justify-between gap-2">
+                                        <div>
+                                            <div className="text-lg font-bold text-slate-900 tracking-tight leading-snug">{j.title}</div>
+                                            <div className="text-xs font-semibold text-violet-600 mt-1 flex items-center gap-1.5">
+                                                <Building2 className="w-3.5 h-3.5" />
+                                                <span>{j.dept}</span>
+                                                {j.jobLevel && (
+                                                    <>
+                                                        <span className="text-slate-300">•</span>
+                                                        <span className="text-slate-500 font-medium">{j.jobLevel}</span>
+                                                    </>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full ${j.status === "Active" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-amber-50 text-amber-700 border border-amber-200"}`}>
+                                            {j.status}
+                                        </span>
+                                    </div>
+
+                                    {j.description && (
+                                        <p className="text-xs text-slate-500 mt-3 line-clamp-2 leading-relaxed">
+                                            {j.description}
+                                        </p>
+                                    )}
+
+                                    {/* Key Skills Badges */}
+                                    {j.keySkills && j.keySkills.length > 0 && (
+                                        <div className="mt-3.5 flex flex-wrap gap-1.5">
+                                            {j.keySkills.slice(0, 4).map((skill, sIdx) => (
+                                                <span
+                                                    key={sIdx}
+                                                    className="text-[11px] font-medium px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-100 rounded-md"
+                                                >
+                                                    {skill}
+                                                </span>
+                                            ))}
+                                            {j.keySkills.length > 4 && (
+                                                <span className="text-[11px] font-medium px-1.5 py-0.5 bg-slate-50 text-slate-500 rounded-md border border-slate-100">
+                                                    +{j.keySkills.length - 4} more
+                                                </span>
                                             )}
                                         </div>
-                                    </div>
-                                    <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full ${j.status === "Active" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-amber-50 text-amber-700 border border-amber-200"}`}>
-                                        {j.status}
-                                    </span>
-                                </div>
+                                    )}
 
-                                {j.description && (
-                                    <p className="text-xs text-slate-500 mt-3 line-clamp-2 leading-relaxed">
-                                        {j.description}
-                                    </p>
-                                )}
-
-                                {/* Key Skills Badges */}
-                                {j.keySkills && j.keySkills.length > 0 && (
-                                    <div className="mt-3.5 flex flex-wrap gap-1.5">
-                                        {j.keySkills.slice(0, 4).map((skill, sIdx) => (
-                                            <span
-                                                key={sIdx}
-                                                className="text-[11px] font-medium px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-100 rounded-md"
-                                            >
-                                                {skill}
-                                            </span>
-                                        ))}
-                                        {j.keySkills.length > 4 && (
-                                            <span className="text-[11px] font-medium px-1.5 py-0.5 bg-slate-50 text-slate-500 rounded-md border border-slate-100">
-                                                +{j.keySkills.length - 4} more
+                                    <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-600">
+                                        <span className="px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-100 flex items-center gap-1 font-medium">
+                                            <MapPin className="w-3 h-3 text-slate-400" />
+                                            {j.loc}
+                                        </span>
+                                        <span className="px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-100 flex items-center gap-1 font-medium">
+                                            <Clock className="w-3 h-3 text-slate-400" />
+                                            {j.type}
+                                        </span>
+                                        {j.workMode && (
+                                            <span className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-100 font-medium">
+                                                {j.workMode}
                                             </span>
                                         )}
+                                        <Link
+                                            to={`/app/candidates?job=${encodeURIComponent(j.title)}`}
+                                            className="px-2.5 py-1 rounded-lg bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-100 font-semibold flex items-center gap-1 transition"
+                                            title="View candidates for this job"
+                                        >
+                                            <Users className="w-3 h-3 text-violet-500" />
+                                            {j.candidates} candidates →
+                                        </Link>
                                     </div>
-                                )}
+                                </div>
 
-                                <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-600">
-                                    <span className="px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-100 flex items-center gap-1 font-medium">
-                                        <MapPin className="w-3 h-3 text-slate-400" />
-                                        {j.loc}
-                                    </span>
-                                    <span className="px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-100 flex items-center gap-1 font-medium">
-                                        <Clock className="w-3 h-3 text-slate-400" />
-                                        {j.type}
-                                    </span>
-                                    {j.workMode && (
-                                        <span className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-100 font-medium">
-                                            {j.workMode}
-                                        </span>
-                                    )}
-                                    <Link
-                                        to={`/app/candidates?job=${encodeURIComponent(j.title)}`}
-                                        className="px-2.5 py-1 rounded-lg bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-100 font-semibold flex items-center gap-1 transition"
-                                        title="View candidates for this job"
-                                    >
-                                        <Users className="w-3 h-3 text-violet-500" />
-                                        {j.candidates} candidates →
-                                    </Link>
+                                <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-3 text-xs">
+                                    <span className="text-slate-400 font-medium">Posted {j.posted}</span>
+                                    <div className="flex items-center gap-2">
+                                        <Link
+                                            to={`/app/candidates?job=${encodeURIComponent(j.title)}`}
+                                            className="text-slate-600 hover:text-violet-600 font-semibold px-2 py-1 rounded-lg hover:bg-slate-50 transition"
+                                            title="View Candidates"
+                                        >
+                                            Candidates
+                                        </Link>
+                                        <button
+                                            onClick={() => setSelectedJobView(j)}
+                                            className="text-violet-600 font-bold hover:text-violet-700 px-2.5 py-1 rounded-lg bg-violet-50 hover:bg-violet-100 transition cursor-pointer"
+                                        >
+                                            Details
+                                        </button>
+                                        <button
+                                            onClick={() => handleDeleteJob(j.id, j.title)}
+                                            className="text-red-500 hover:text-red-700 font-bold px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 transition cursor-pointer flex items-center gap-1"
+                                            title="Delete Job"
+                                        >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                            <span>Delete</span>
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
+                        ))}
+                    </div>
 
-                            <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-3 text-xs">
-                                <span className="text-slate-400 font-medium">Posted {j.posted}</span>
-                                <div className="flex items-center gap-2">
-                                    <Link
-                                        to={`/app/candidates?job=${encodeURIComponent(j.title)}`}
-                                        className="text-slate-600 hover:text-violet-600 font-semibold px-2 py-1 rounded-lg hover:bg-slate-50 transition"
-                                        title="View Candidates"
-                                    >
-                                        Candidates
-                                    </Link>
-                                    <button
-                                        onClick={() => setSelectedJobView(j)}
-                                        className="text-violet-600 font-bold hover:text-violet-700 px-2.5 py-1 rounded-lg bg-violet-50 hover:bg-violet-100 transition cursor-pointer"
-                                    >
-                                        Details
-                                    </button>
-                                    <button
-                                        onClick={() => handleDeleteJob(j.id, j.title)}
-                                        className="text-red-500 hover:text-red-700 font-bold px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 transition cursor-pointer flex items-center gap-1"
-                                        title="Delete Job"
-                                    >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                        <span>Delete</span>
-                                    </button>
-                                </div>
+                    {/* Pagination Controls */}
+                    {totalPages > 1 && (
+                        <div className="flex items-center justify-between border-t border-slate-200/80 pt-4 mt-2">
+                            <span className="text-xs text-slate-500 font-medium">
+                                Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, filtered.length)} of {filtered.length} jobs
+                            </span>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    disabled={currentPage === 1}
+                                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                    className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                                >
+                                    Previous
+                                </button>
+                                <span className="text-xs font-bold text-violet-700 px-2">
+                                    {currentPage} / {totalPages}
+                                </span>
+                                <button
+                                    disabled={currentPage === totalPages}
+                                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                                    className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                                >
+                                    Next
+                                </button>
                             </div>
                         </div>
-                    ))}
+                    )}
                 </div>
             )}
 

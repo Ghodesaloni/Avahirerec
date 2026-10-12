@@ -3,29 +3,20 @@ const { getPool } = require("./postgres");
 
 const COLLECTION = "jobs";
 
-function matchesUser(item, targetEmail) {
-  if (!targetEmail) return true;
-  const target = targetEmail.toLowerCase().trim();
-  const createdBy = (item.createdBy || "").toLowerCase().trim();
-  const userEmail = (item.userEmail || "").toLowerCase().trim();
+function matchesUser(item, userRef) {
+  if (!userRef || !item) return false;
+  const targetId = typeof userRef === "object" ? (userRef.id || userRef.userId) : null;
+  const targetEmail = (typeof userRef === "object" ? (userRef.email || userRef.userEmail) : userRef || "").toLowerCase().trim();
 
-  if (createdBy === target || userEmail === target) return true;
-
-  // Handle Saloni Ghode email aliases
-  if (
-    (target === "salonighode@gmail.com" || target === "salonighode3@gmail.com") &&
-    (createdBy === "salonighode@gmail.com" || createdBy === "salonighode3@gmail.com" ||
-     userEmail === "salonighode@gmail.com" || userEmail === "salonighode3@gmail.com")
-  ) {
+  const itemId = item.userId !== undefined ? Number(item.userId) : (item.user_id !== undefined ? Number(item.user_id) : null);
+  if (targetId && itemId && Number(targetId) === itemId) {
     return true;
   }
 
-  // Handle Snehal Harde email aliases
-  if (
-    (target === "snehal.harde2935@gmail.com" || target === "snehalharde09@gmail.com" || target === "sneha.harde2935@gmail.com") &&
-    (createdBy === "snehal.harde2935@gmail.com" || createdBy === "snehalharde09@gmail.com" ||
-     userEmail === "snehal.harde2935@gmail.com" || userEmail === "snehalharde09@gmail.com")
-  ) {
+  const createdBy = (item.createdBy || item.created_by || "").toLowerCase().trim();
+  const userEmail = (item.userEmail || item.user_email || "").toLowerCase().trim();
+
+  if (targetEmail && (createdBy === targetEmail || userEmail === targetEmail)) {
     return true;
   }
 
@@ -37,6 +28,7 @@ class JobsDatabase {
     if (!row) return null;
     return {
       id: row.id,
+      userId: row.user_id !== null && row.user_id !== undefined ? Number(row.user_id) : null,
       title: row.title,
       dept: row.dept || "Engineering",
       jobLevel: row.job_level || "Mid Level",
@@ -60,9 +52,13 @@ class JobsDatabase {
 
   getAll(filters = {}) {
     let jobs = readData(COLLECTION, []);
-    if (filters.userEmail) {
-      jobs = jobs.filter(j => matchesUser(j, filters.userEmail));
+    const userRef = filters.user || (filters.userId ? { id: filters.userId, email: filters.userEmail } : filters.userEmail);
+    if (!userRef) {
+      return []; // Strict isolation: return empty if no authenticated user context
     }
+
+    jobs = jobs.filter(j => matchesUser(j, userRef));
+
     if (filters.status && filters.status !== "All") {
       jobs = jobs.filter(j => j.status.toLowerCase() === filters.status.toLowerCase());
     }
@@ -85,21 +81,34 @@ class JobsDatabase {
   }
 
   async getAllAsync(filters = {}) {
+    const userRef = filters.user || (filters.userId ? { id: filters.userId, email: filters.userEmail } : filters.userEmail);
+    if (!userRef) {
+      return []; // Strict isolation: never return jobs across accounts
+    }
+
+    const userId = typeof userRef === "object" ? userRef.id : filters.userId;
+    const userEmail = (typeof userRef === "object" ? userRef.email : filters.userEmail || userRef || "").toLowerCase().trim();
+
     try {
       const pool = getPool();
       let query = "SELECT * FROM public.jobs";
       const params = [];
       const conditions = [];
 
-      if (filters.userEmail) {
-        const emailLower = filters.userEmail.toLowerCase().trim();
-        params.push(emailLower);
-        if (emailLower === "salonighode@gmail.com" || emailLower === "salonighode3@gmail.com") {
-          conditions.push(`(LOWER(created_by) IN ('salonighode@gmail.com', 'salonighode3@gmail.com') OR LOWER(user_email) IN ('salonighode@gmail.com', 'salonighode3@gmail.com'))`);
-        } else {
-          conditions.push(`(LOWER(created_by) = $${params.length} OR LOWER(user_email) = $${params.length})`);
-        }
+      // Enforce strict account boundary
+      if (userId && userEmail) {
+        params.push(userId, userEmail);
+        conditions.push(`(user_id = $1 OR LOWER(created_by) = $2 OR LOWER(user_email) = $2)`);
+      } else if (userId) {
+        params.push(userId);
+        conditions.push(`user_id = $1`);
+      } else if (userEmail) {
+        params.push(userEmail);
+        conditions.push(`(LOWER(created_by) = $1 OR LOWER(user_email) = $1)`);
+      } else {
+        return [];
       }
+
       if (filters.status && filters.status !== "All") {
         params.push(filters.status.toLowerCase());
         conditions.push(`LOWER(status) = $${params.length}`);
@@ -131,15 +140,37 @@ class JobsDatabase {
     return this.getAll(filters);
   }
 
-  getById(id) {
+  async getById(id, userRef = null) {
+    if (!id) return null;
+
+    // Try PostgreSQL first
+    try {
+      const pool = getPool();
+      const res = await pool.query("SELECT * FROM public.jobs WHERE id = $1 LIMIT 1", [id]);
+      if (res.rows && res.rows[0]) {
+        const job = this._mapRow(res.rows[0]);
+        if (userRef && !matchesUser(job, userRef)) {
+          return null; // IDOR Protection: forbidden access to other accounts' jobs
+        }
+        return job;
+      }
+    } catch (err) {
+      console.warn("PostgreSQL jobs getById notice:", err.message);
+    }
+
     const jobs = readData(COLLECTION, []);
-    return jobs.find(j => j.id === id) || null;
+    const job = jobs.find(j => j.id === id) || null;
+    if (job && userRef && !matchesUser(job, userRef)) {
+      return null;
+    }
+    return job;
   }
 
   create(jobData) {
     const jobs = readData(COLLECTION, []);
     const newJob = {
       id: `job-${Date.now()}`,
+      userId: jobData.userId ? Number(jobData.userId) : null,
       title: jobData.title || "Untitled Job",
       dept: jobData.dept || "Engineering",
       jobLevel: jobData.jobLevel || "Mid Level",
@@ -162,49 +193,54 @@ class JobsDatabase {
     jobs.unshift(newJob);
     writeData(COLLECTION, jobs);
 
-    // Save directly to PostgreSQL public.jobs
+    // Save directly to PostgreSQL public.jobs with user_id
     try {
       const pool = getPool();
       pool.query(`
         INSERT INTO public.jobs (
           id, title, dept, job_level, reports_to, loc, is_remote_position,
           work_mode, type, exp_level, description, key_skills, candidates,
-          status, created_by, user_email, posted, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
+          status, created_by, user_email, posted, user_id, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW())
         ON CONFLICT (id) DO UPDATE SET
           title = EXCLUDED.title,
           dept = EXCLUDED.dept,
           status = EXCLUDED.status,
+          user_id = COALESCE(EXCLUDED.user_id, public.jobs.user_id),
           updated_at = NOW();
       `, [
         newJob.id, newJob.title, newJob.dept, newJob.jobLevel, newJob.reportsTo,
         newJob.loc, newJob.isRemotePosition, newJob.workMode, newJob.type,
         newJob.expLevel, newJob.description, JSON.stringify(newJob.keySkills),
         newJob.candidates, newJob.status, newJob.createdBy, newJob.userEmail,
-        newJob.posted
+        newJob.posted, newJob.userId
       ]).catch(err => console.warn("PostgreSQL job insert warning:", err.message));
     } catch (e) {}
 
     return newJob;
   }
 
-  update(id, updates) {
+  async update(id, updates, userRef = null) {
+    const existing = await this.getById(id, userRef);
+    if (!existing) {
+      return null; // Not found or not authorized
+    }
+
     const jobs = readData(COLLECTION, []);
     const index = jobs.findIndex(j => j.id === id);
-    if (index === -1) return null;
-
-    jobs[index] = {
-      ...jobs[index],
-      ...updates,
-      updatedAt: new Date().toISOString()
-    };
-    writeData(COLLECTION, jobs);
+    if (index >= 0) {
+      jobs[index] = {
+        ...jobs[index],
+        ...updates,
+        updatedAt: new Date().toISOString()
+      };
+      writeData(COLLECTION, jobs);
+    }
 
     // Update in PostgreSQL public.jobs
     try {
       const pool = getPool();
-      const updated = jobs[index];
-      pool.query(`
+      await pool.query(`
         UPDATE public.jobs SET
           title = COALESCE($2, title),
           dept = COALESCE($3, dept),
@@ -213,30 +249,45 @@ class JobsDatabase {
           candidates = COALESCE($6, candidates),
           updated_at = NOW()
         WHERE id = $1
-      `, [id, updates.title || null, updates.dept || null, updates.status || null, updates.description || null, updates.candidates !== undefined ? updates.candidates : null])
-      .catch(err => console.warn("PostgreSQL job update warning:", err.message));
-    } catch (e) {}
+      `, [
+        id,
+        updates.title || null,
+        updates.dept || null,
+        updates.status || null,
+        updates.description || null,
+        updates.candidates !== undefined ? updates.candidates : null
+      ]);
+    } catch (err) {
+      console.warn("PostgreSQL job update warning:", err.message);
+    }
 
-    return jobs[index];
+    return await this.getById(id, userRef);
   }
 
-  delete(id) {
+  async delete(id, userRef = null) {
+    const existing = await this.getById(id, userRef);
+    if (!existing) {
+      return false; // Not found or not authorized
+    }
+
     const jobs = readData(COLLECTION, []);
     const filtered = jobs.filter(j => j.id !== id);
-    if (filtered.length === jobs.length) return false;
-    writeData(COLLECTION, filtered);
+    if (filtered.length !== jobs.length) {
+      writeData(COLLECTION, filtered);
+    }
 
     // Delete in PostgreSQL public.jobs
     try {
       const pool = getPool();
-      pool.query("DELETE FROM public.jobs WHERE id = $1", [id])
-        .catch(err => console.warn("PostgreSQL job delete warning:", err.message));
-    } catch (e) {}
+      await pool.query("DELETE FROM public.jobs WHERE id = $1", [id]);
+    } catch (err) {
+      console.warn("PostgreSQL job delete warning:", err.message);
+    }
 
     return true;
   }
 
-  incrementCandidates(id, delta = 1) {
+  async incrementCandidates(id, delta = 1) {
     const jobs = readData(COLLECTION, []);
     const job = jobs.find(j => j.id === id);
     if (job) {
@@ -245,10 +296,10 @@ class JobsDatabase {
 
       try {
         const pool = getPool();
-        pool.query(
+        await pool.query(
           "UPDATE public.jobs SET candidates = GREATEST(0, candidates + $2), updated_at = NOW() WHERE id = $1",
           [id, delta]
-        ).catch(e => {});
+        );
       } catch (e) {}
 
       return job;

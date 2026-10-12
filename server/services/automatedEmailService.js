@@ -6,6 +6,7 @@ const resumesDb = require("../db/resumesDb");
 const candidatesDb = require("../db/candidatesDb");
 const jobsDb = require("../db/jobsDb");
 const { getPool, getUserByEmail } = require("../db/postgres");
+const settingsDb = require("../db/settingsDb");
 
 const LOGS_COLLECTION = "email_automated_logs";
 
@@ -536,6 +537,13 @@ async function sendInterviewScheduledEmail({ interview, hrEmail, hrName, company
     const interviewTime = interview.time || "11:00 AM IST";
     const duration = interview.duration || "45 Minutes";
 
+    // Recruiter Interview Settings Enforcement: check if invitation email is enabled
+    const ivSettings = settingsDb.getInterviewSettings(hr?.email || interview.userEmail || interview.createdBy);
+    if (ivSettings && ivSettings.invitationEmail === false) {
+      console.log(`[AUTOMATED-EMAIL] Interview invitation email disabled in settings for ${hr?.email || "recruiter"}`);
+      return { success: true, skipped: true, message: "Interview invitation email disabled in settings" };
+    }
+
     // Idempotency key: prevents duplicate scheduling emails for this interview
     const idempotencyKey = `interview_scheduled_${interviewId}_${linkCode}`;
     if (isAlreadySent(idempotencyKey)) {
@@ -883,12 +891,22 @@ async function checkAndSendUpcomingReminders() {
         continue;
       }
 
-      const diffMs = interviewTime.getTime() - now.getTime();
-      const diffMins = Math.round(diffMs / (60 * 1000));
+      // Check recruiter settings for automatic reminder delivery and lead time
+      const ivSettings = settingsDb.getInterviewSettings(iv.userEmail || iv.createdBy);
+      if (ivSettings && ivSettings.reminderBeforeInterview === false) {
+        continue;
+      }
 
-      // Trigger if scheduled between 0 and 65 minutes from now (1 hour before)
-      if (diffMs > 0 && diffMs <= 65 * 60 * 1000) {
-        console.log(`[REMINDER-SCHEDULER] Upcoming interview detected in ${diffMins} mins for ${iv.name} (${iv.email}). Triggering 1-Hour reminder.`);
+      const reminderTimeStr = String(ivSettings?.reminderTime || "15 Minutes").toLowerCase();
+      let thresholdMins = 18;
+      if (reminderTimeStr.includes("30")) thresholdMins = 35;
+      else if (reminderTimeStr.includes("1 hour") || reminderTimeStr.includes("60")) thresholdMins = 65;
+      else if (reminderTimeStr.includes("15")) thresholdMins = 18;
+      else if (reminderTimeStr.includes("5")) thresholdMins = 8;
+
+      // Trigger if scheduled between 0 and configured lead time from now
+      if (diffMs > 0 && diffMins <= thresholdMins) {
+        console.log(`[REMINDER-SCHEDULER] Upcoming interview detected in ${diffMins} mins for ${iv.name} (${iv.email}). Triggering reminder (configured lead: ${reminderTimeStr}).`);
         await sendInterviewReminderEmail({ interview: iv });
       }
     }

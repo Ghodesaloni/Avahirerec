@@ -2,9 +2,10 @@ const express = require("express");
 const router = express.Router();
 const settingsDb = require("../db/settingsDb");
 const awsService = require("../services/awsService");
+const { requireAuth } = require("../middleware/authMiddleware");
 
 // GET /api/settings/aws - get AWS cloud server configuration & status
-router.get("/aws", (req, res) => {
+router.get("/aws", requireAuth, (req, res) => {
   try {
     const config = awsService.getConfig();
     res.json({ success: true, data: config });
@@ -14,7 +15,7 @@ router.get("/aws", (req, res) => {
 });
 
 // PUT /api/settings/aws - update AWS server settings
-router.put("/aws", (req, res) => {
+router.put("/aws", requireAuth, (req, res) => {
   try {
     const updated = awsService.updateConfig(req.body);
     res.json({ success: true, data: updated, message: "AWS Cloud Server settings updated successfully" });
@@ -24,7 +25,7 @@ router.put("/aws", (req, res) => {
 });
 
 // POST /api/settings/aws/test - test AWS connection (RDS, S3, SES, Compute)
-router.post("/aws/test", async (req, res) => {
+router.post("/aws/test", requireAuth, async (req, res) => {
   try {
     const result = await awsService.testConnection();
     res.json({ success: true, data: result, message: "AWS Server diagnostics completed" });
@@ -33,20 +34,20 @@ router.post("/aws/test", async (req, res) => {
   }
 });
 
-// GET /api/settings - get organization & AI settings
-router.get("/", (req, res) => {
+// GET /api/settings - get organization & AI settings scoped to authenticated recruiter
+router.get("/", requireAuth, async (req, res) => {
   try {
-    const settings = settingsDb.getSettings();
+    const settings = await settingsDb.getSettingsAsync(req.user.email);
     res.json({ success: true, data: settings });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// PUT /api/settings - update settings
-router.put("/", (req, res) => {
+// PUT /api/settings - update settings for authenticated recruiter
+router.put("/", requireAuth, async (req, res) => {
   try {
-    const updated = settingsDb.updateSettings(req.body);
+    const updated = settingsDb.updateSettings(req.body, req.user.email);
     res.json({ success: true, data: updated, message: "Settings updated successfully" });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -54,9 +55,9 @@ router.put("/", (req, res) => {
 });
 
 // GET /api/settings/interview - get interview & proctoring settings
-router.get("/interview", (req, res) => {
+router.get("/interview", requireAuth, async (req, res) => {
   try {
-    const settings = settingsDb.getInterviewSettings();
+    const settings = await settingsDb.getInterviewSettingsAsync(req.user.email);
     res.json({ success: true, data: settings });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -64,9 +65,9 @@ router.get("/interview", (req, res) => {
 });
 
 // PUT /api/settings/interview - update interview & proctoring settings
-router.put("/interview", (req, res) => {
+router.put("/interview", requireAuth, async (req, res) => {
   try {
-    const updated = settingsDb.updateInterviewSettings(req.body);
+    const updated = settingsDb.updateInterviewSettings(req.body, req.user.email);
     res.json({ success: true, data: updated, message: "Interview settings updated successfully" });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -74,9 +75,9 @@ router.put("/interview", (req, res) => {
 });
 
 // GET /api/settings/profile - get recruiter profile
-router.get("/profile", (req, res) => {
+router.get("/profile", requireAuth, (req, res) => {
   try {
-    const profile = settingsDb.getProfile();
+    const profile = settingsDb.getProfile(req.user.email);
     res.json({ success: true, data: profile });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -84,9 +85,9 @@ router.get("/profile", (req, res) => {
 });
 
 // PUT /api/settings/profile - update recruiter profile
-router.put("/profile", (req, res) => {
+router.put("/profile", requireAuth, (req, res) => {
   try {
-    const updated = settingsDb.updateProfile(req.body);
+    const updated = settingsDb.updateProfile(req.body, req.user.email);
     res.json({ success: true, data: updated, message: "Profile updated successfully" });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

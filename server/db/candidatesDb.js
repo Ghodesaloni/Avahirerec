@@ -6,29 +6,20 @@ const transcriptDocService = require("../services/transcriptDocService");
 
 const COLLECTION = "candidates";
 
-function matchesUser(item, targetEmail) {
-  if (!targetEmail) return true;
-  const target = targetEmail.toLowerCase().trim();
-  const createdBy = (item.createdBy || "").toLowerCase().trim();
-  const userEmail = (item.userEmail || "").toLowerCase().trim();
+function matchesUser(item, userRef) {
+  if (!userRef || !item) return false;
+  const targetId = typeof userRef === "object" ? (userRef.id || userRef.userId) : null;
+  const targetEmail = (typeof userRef === "object" ? (userRef.email || userRef.userEmail) : userRef || "").toLowerCase().trim();
 
-  if (createdBy === target || userEmail === target) return true;
-
-  // Handle Saloni Ghode email aliases
-  if (
-    (target === "salonighode@gmail.com" || target === "salonighode3@gmail.com") &&
-    (createdBy === "salonighode@gmail.com" || createdBy === "salonighode3@gmail.com" ||
-     userEmail === "salonighode@gmail.com" || userEmail === "salonighode3@gmail.com")
-  ) {
+  const itemId = item.userId !== undefined ? Number(item.userId) : (item.user_id !== undefined ? Number(item.user_id) : null);
+  if (targetId && itemId && Number(targetId) === itemId) {
     return true;
   }
 
-  // Handle Snehal Harde email aliases
-  if (
-    (target === "snehal.harde2935@gmail.com" || target === "snehalharde09@gmail.com" || target === "sneha.harde2935@gmail.com") &&
-    (createdBy === "snehal.harde2935@gmail.com" || createdBy === "snehalharde09@gmail.com" ||
-     userEmail === "snehal.harde2935@gmail.com" || userEmail === "snehalharde09@gmail.com")
-  ) {
+  const createdBy = (item.createdBy || item.created_by || "").toLowerCase().trim();
+  const userEmail = (item.userEmail || item.user_email || "").toLowerCase().trim();
+
+  if (targetEmail && (createdBy === targetEmail || userEmail === targetEmail)) {
     return true;
   }
 
@@ -63,6 +54,14 @@ function applyTranscriptEvaluation(cand) {
 
 class CandidatesDatabase {
   async getAll(filters = {}) {
+    const userRef = filters.user || (filters.userId ? { id: filters.userId, email: filters.userEmail } : filters.userEmail);
+    if (!userRef && !filters.allowAll) {
+      return []; // Strict isolation: return empty if no authenticated user context provided
+    }
+
+    const userId = typeof userRef === "object" ? userRef.id : filters.userId;
+    const userEmail = (typeof userRef === "object" ? userRef.email : filters.userEmail || userRef || "").toLowerCase().trim();
+
     // 1. Try PostgreSQL first
     try {
       const p = getPool();
@@ -70,17 +69,15 @@ class CandidatesDatabase {
       const params = [];
       const conditions = [];
 
-      if (filters.userEmail) {
-        const emailLower = filters.userEmail.toLowerCase().trim();
-        if (emailLower === "salonighode@gmail.com" || emailLower === "salonighode3@gmail.com") {
-          conditions.push(`(LOWER(created_by) IN ('salonighode@gmail.com', 'salonighode3@gmail.com') OR LOWER(user_email) IN ('salonighode@gmail.com', 'salonighode3@gmail.com'))`);
-        } else if (emailLower === "snehal.harde2935@gmail.com" || emailLower === "snehalharde09@gmail.com" || emailLower === "sneha.harde2935@gmail.com") {
-          conditions.push(`(LOWER(created_by) IN ('snehal.harde2935@gmail.com', 'snehalharde09@gmail.com', 'sneha.harde2935@gmail.com') OR LOWER(user_email) IN ('snehal.harde2935@gmail.com', 'snehalharde09@gmail.com', 'sneha.harde2935@gmail.com'))`);
-        } else {
-          params.push(emailLower);
-          const idx = params.length;
-          conditions.push(`(LOWER(created_by) = $${idx} OR LOWER(user_email) = $${idx})`);
-        }
+      if (userId && userEmail) {
+        params.push(userId, userEmail);
+        conditions.push(`(user_id = $1 OR LOWER(created_by) = $2 OR LOWER(user_email) = $2)`);
+      } else if (userId) {
+        params.push(userId);
+        conditions.push(`user_id = $1`);
+      } else if (userEmail) {
+        params.push(userEmail);
+        conditions.push(`(LOWER(created_by) = $1 OR LOWER(user_email) = $1)`);
       }
 
       if (filters.status && filters.status !== "All") {
@@ -114,8 +111,8 @@ class CandidatesDatabase {
     let list = readData(COLLECTION, []);
     list = list.map(c => applyTranscriptEvaluation(c));
 
-    if (filters.userEmail) {
-      list = list.filter(c => matchesUser(c, filters.userEmail));
+    if (userRef) {
+      list = list.filter(c => matchesUser(c, userRef));
     }
     if (filters.status && filters.status !== "All") {
       list = list.filter(c => (c.status || "").toLowerCase() === filters.status.toLowerCase());
@@ -134,14 +131,18 @@ class CandidatesDatabase {
     return list;
   }
 
-  async getById(id) {
+  async getById(id, userRef = null) {
     if (!id) return null;
     // 1. Try PostgreSQL
     try {
       const p = getPool();
       const res = await p.query("SELECT * FROM public.candidates WHERE id = $1 LIMIT 1", [id]);
       if (res.rows && res.rows.length > 0) {
-        return this._mapRow(res.rows[0]);
+        const cand = this._mapRow(res.rows[0]);
+        if (userRef && !matchesUser(cand, userRef)) {
+          return null; // IDOR Protection: unauthorized to access another account's candidate
+        }
+        return cand;
       }
     } catch (err) {
       console.warn("PostgreSQL candidates getById fallback:", err.message);
@@ -150,7 +151,11 @@ class CandidatesDatabase {
     // 2. Fallback to local mirror
     const list = readData(COLLECTION, []);
     const found = list.find(c => c.id === id) || null;
-    return applyTranscriptEvaluation(found);
+    const evaluated = applyTranscriptEvaluation(found);
+    if (evaluated && userRef && !matchesUser(evaluated, userRef)) {
+      return null;
+    }
+    return evaluated;
   }
 
   async create(data) {
@@ -189,6 +194,7 @@ class CandidatesDatabase {
 
     const newCand = {
       id,
+      userId: data.userId ? Number(data.userId) : null,
       name: data.name || "Candidate",
       email: data.email || "",
       phone: data.phone || "",
@@ -232,7 +238,7 @@ class CandidatesDatabase {
     }
     writeData(COLLECTION, list);
 
-    // Persist to PostgreSQL public.candidates
+    // Persist to PostgreSQL public.candidates with user_id
     try {
       const p = getPool();
       const query = `
@@ -241,9 +247,9 @@ class CandidatesDatabase {
           duration, mode, score, status, notes, summary_points, recommendation,
           transcript, evaluation_breakdown, question_evaluations, audio_url, audio_path,
           selection_date, selection_timestamp, transcript_path, transcript_url,
-          department, recording_status, job_id, created_by, user_email, created_at
+          department, recording_status, job_id, created_by, user_email, user_id, created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, NOW())
         ON CONFLICT (id) DO UPDATE SET
           name = EXCLUDED.name,
           email = EXCLUDED.email,
@@ -269,6 +275,7 @@ class CandidatesDatabase {
           department = EXCLUDED.department,
           recording_status = EXCLUDED.recording_status,
           job_id = EXCLUDED.job_id,
+          user_id = COALESCE(EXCLUDED.user_id, public.candidates.user_id),
           created_by = EXCLUDED.created_by,
           user_email = EXCLUDED.user_email
         RETURNING *;
@@ -303,7 +310,8 @@ class CandidatesDatabase {
         newCand.recordingStatus,
         newCand.jobId,
         newCand.createdBy,
-        newCand.userEmail
+        newCand.userEmail,
+        newCand.userId
       ];
 
       await p.query(query, values);
@@ -326,10 +334,10 @@ class CandidatesDatabase {
       console.warn("[CandidatesDB] Auto docx generation notice:", err.message);
     });
 
-    // If candidate status is Selected, sync daily reports
+    // If candidate status is Selected, sync daily reports for this user
     if (newCand.status === "Selected") {
-      this.getAll().then(allCands => {
-        excelReportService.syncAllReports(allCands).catch(err => {
+      this.getAll({ user: { id: newCand.userId, email: newCand.userEmail } }).then(userCands => {
+        excelReportService.syncAllReports(userCands, "", newCand.userEmail).catch(err => {
           console.warn("[CandidatesDB] Excel report sync notice:", err.message);
         });
       }).catch(() => {});
@@ -338,7 +346,12 @@ class CandidatesDatabase {
     return newCand;
   }
 
-  async update(id, updates) {
+  async update(id, updates, userRef = null) {
+    const existing = await this.getById(id, userRef);
+    if (!existing) {
+      return null; // Not found or unauthorized
+    }
+
     // 1. Update local mirror
     const list = readData(COLLECTION, []);
     const idx = list.findIndex(c => c.id === id);
@@ -346,7 +359,6 @@ class CandidatesDatabase {
     let statusChanged = false;
 
     if (idx >= 0) {
-      const existing = list[idx];
       // Automatically handle selection date
       if (updates.status === "Selected") {
         if (!updates.selectionDate && !existing.selectionDate) {
@@ -354,7 +366,6 @@ class CandidatesDatabase {
           updates.selectionTimestamp = String(Date.now());
         }
       } else if (updates.status && updates.status !== "Selected") {
-        // If changed away from Selected, clear selectionDate so report is updated
         if (existing.status === "Selected") {
           updates.selectionDate = "";
           updates.selectionTimestamp = "";
@@ -439,7 +450,7 @@ class CandidatesDatabase {
 
       if (setClauses.length > 0) {
         params.push(id);
-        const query = `UPDATE public.candidates SET ${setClauses.join(", ")} WHERE id = $${params.length} RETURNING *;`;
+        const query = `UPDATE public.candidates SET ${setClauses.join(", ")}, updated_at = NOW() WHERE id = $${params.length} RETURNING *;`;
         const res = await p.query(query, params);
         if (res.rows && res.rows[0]) {
           updatedItem = this._mapRow(res.rows[0]);
@@ -449,19 +460,26 @@ class CandidatesDatabase {
       console.warn("PostgreSQL candidate update notice:", err.message);
     }
 
-    // If candidate status is or was Selected, sync Excel reports immediately
+    // If candidate status is or was Selected, sync Excel reports for this account
     if (statusChanged || updates.status === "Selected" || (updatedItem && updatedItem.status === "Selected")) {
-      this.getAll().then(allCands => {
-        excelReportService.syncAllReports(allCands).catch(err => {
+      const ownerEmail = existing.userEmail || existing.createdBy;
+      const ownerId = existing.userId;
+      this.getAll({ user: { id: ownerId, email: ownerEmail } }).then(allCands => {
+        excelReportService.syncAllReports(allCands, "", ownerEmail).catch(err => {
           console.warn("[CandidatesDB] Excel report sync notice on update:", err.message);
         });
       }).catch(() => {});
     }
 
-    return updatedItem;
+    return updatedItem || existing;
   }
 
-  async delete(id) {
+  async delete(id, userRef = null) {
+    const existing = await this.getById(id, userRef);
+    if (!existing) {
+      return false; // Not found or unauthorized
+    }
+
     // 1. Delete from local mirror
     const list = readData(COLLECTION, []);
     const filtered = list.filter(c => c.id !== id);
@@ -475,8 +493,10 @@ class CandidatesDatabase {
       console.warn("PostgreSQL candidate delete notice:", err.message);
     }
 
-    // Sync reports after deletion
-    excelReportService.syncAllReports(filtered).catch(() => {});
+    // Sync reports for this user after deletion
+    const ownerEmail = existing.userEmail || existing.createdBy;
+    const userFiltered = filtered.filter(c => matchesUser(c, { id: existing.userId, email: ownerEmail }));
+    excelReportService.syncAllReports(userFiltered, "", ownerEmail).catch(() => {});
 
     return true;
   }
@@ -486,6 +506,7 @@ class CandidatesDatabase {
     const qEvals = typeof row.question_evaluations === "string" ? JSON.parse(row.question_evaluations) : (row.question_evaluations || []);
     const mapped = {
       id: row.id,
+      userId: row.user_id !== null && row.user_id !== undefined ? Number(row.user_id) : null,
       name: row.name,
       email: row.email,
       phone: row.phone,

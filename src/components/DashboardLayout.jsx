@@ -1,25 +1,50 @@
-import React, { useState, useEffect } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import React, { useState, useEffect, useCallback } from "react";
+import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import AvaHireLogo from "@/components/AvaHireLogo";
+import { notificationsApi, profileApi } from "@/services/api";
 import {
     Bell,
     Check,
     CheckCheck,
+    CheckCircle2,
     Clock,
     FileText,
     Video,
     Calendar,
     Briefcase,
     AlertTriangle,
+    Award,
     Sparkles,
     Trash2,
     X,
     ExternalLink,
     Settings as SettingsIcon,
     SlidersHorizontal,
-    Search
+    Search,
+    XCircle,
+    UserCheck
 } from "lucide-react";
+
+const ICON_MAP = {
+    Video,
+    FileText,
+    Briefcase,
+    CheckCircle2,
+    AlertTriangle,
+    Award,
+    Calendar,
+    Sparkles,
+    Bell,
+    XCircle,
+    UserCheck
+};
+
+const resolveIcon = (iconProp) => {
+    if (!iconProp) return Bell;
+    if (typeof iconProp === "function" || typeof iconProp === "object") return iconProp;
+    return ICON_MAP[iconProp] || Bell;
+};
 
 const menu = [
     { to: "/app/dashboard", label: "Dashboard", icon: "fa-house" },
@@ -33,13 +58,19 @@ const menu = [
     { to: "/app/settings", label: "Settings", icon: "fa-gear" },
 ];
 
-const initialNotifications = [];
-
 const DashboardLayout = () => {
     const navigate = useNavigate();
+    const location = useLocation();
     const [isNotificationOpen, setIsNotificationOpen] = useState(false);
-    const [notifications, setNotifications] = useState(initialNotifications);
+    const [notifications, setNotifications] = useState([]);
     const [notificationFilter, setNotificationFilter] = useState("all");
+
+    // Open notifications drawer automatically if routed to /app/notifications or ?notifications=open
+    useEffect(() => {
+        if (location.search.includes("notifications=open") || location.pathname.includes("notifications")) {
+            setIsNotificationOpen(true);
+        }
+    }, [location]);
 
     const [globalSearch, setGlobalSearch] = useState("");
     const [user, setUser] = useState(() => {
@@ -50,7 +81,41 @@ const DashboardLayout = () => {
         }
     });
 
-    // Theme & Profile sync
+    const loadNotifications = useCallback(async () => {
+        try {
+            const res = await notificationsApi.getAll();
+            if (res && Array.isArray(res.data)) {
+                setNotifications(res.data);
+            }
+        } catch (e) {
+            console.warn("Failed to load notifications from database:", e);
+        }
+    }, []);
+
+    const loadUserProfile = useCallback(async () => {
+        try {
+            const remoteProfile = await profileApi.getProfile();
+            if (remoteProfile) {
+                const existing = JSON.parse(localStorage.getItem("avahire_user") || "{}");
+                const merged = {
+                    ...existing,
+                    id: remoteProfile.id || existing.id,
+                    email: remoteProfile.email || existing.email,
+                    name: remoteProfile.fullName || remoteProfile.name || existing.name,
+                    company: remoteProfile.companyName || remoteProfile.company || existing.company,
+                    designation: remoteProfile.jobTitle || remoteProfile.designation || existing.designation,
+                    phone: remoteProfile.phone || existing.phone,
+                    avatar: remoteProfile.avatar || existing.avatar
+                };
+                localStorage.setItem("avahire_user", JSON.stringify(merged));
+                setUser(merged);
+            }
+        } catch (e) {
+            console.warn("Failed to load HR profile from database:", e);
+        }
+    }, []);
+
+    // Theme, Profile & Notifications sync
     useEffect(() => {
         // Initialize Theme
         const storedTheme = localStorage.getItem("avahire_theme");
@@ -79,14 +144,30 @@ const DashboardLayout = () => {
             }
         };
 
+        const handleNotificationsUpdated = () => {
+            loadNotifications();
+        };
+
         window.addEventListener("avahire_theme_changed", handleThemeChanged);
         window.addEventListener("avahire_user_updated", handleProfileUpdated);
+        window.addEventListener("avahire_notifications_updated", handleNotificationsUpdated);
+
+        // Initial loads
+        loadNotifications();
+        loadUserProfile();
+
+        // 30s background poll for notifications
+        const pollTimer = setInterval(() => {
+            loadNotifications();
+        }, 30000);
 
         return () => {
             window.removeEventListener("avahire_theme_changed", handleThemeChanged);
             window.removeEventListener("avahire_user_updated", handleProfileUpdated);
+            window.removeEventListener("avahire_notifications_updated", handleNotificationsUpdated);
+            clearInterval(pollTimer);
         };
-    }, []);
+    }, [loadNotifications, loadUserProfile]);
 
     const handleGlobalSearch = (e) => {
         if (e.key === "Enter" && globalSearch.trim()) {
@@ -118,30 +199,53 @@ const DashboardLayout = () => {
         return true;
     });
 
-    const markAllAsRead = () => {
-        setNotifications((prev) => prev.map((n) => ({ ...n, unread: false })));
-        toast.success("All notifications marked as read");
+    const markAllAsRead = async () => {
+        try {
+            await notificationsApi.markAllAsRead();
+            setNotifications((prev) => prev.map((n) => ({ ...n, unread: false })));
+            toast.success("All notifications marked as read");
+        } catch (e) {
+            setNotifications((prev) => prev.map((n) => ({ ...n, unread: false })));
+            toast.success("All notifications marked as read");
+        }
     };
 
-    const markAsRead = (id) => {
+    const markAsRead = async (id) => {
+        try {
+            await notificationsApi.markAsRead(id);
+        } catch (e) {
+            console.warn("Failed to mark as read on server:", e);
+        }
         setNotifications((prev) =>
             prev.map((n) => (n.id === id ? { ...n, unread: false } : n))
         );
     };
 
-    const deleteNotification = (id, e) => {
+    const deleteNotification = async (id, e) => {
         e.stopPropagation();
+        try {
+            await notificationsApi.delete(id);
+        } catch (e) {
+            console.warn("Failed to delete notification on server:", e);
+        }
         setNotifications((prev) => prev.filter((n) => n.id !== id));
         toast.info("Notification removed");
     };
 
-    const clearAll = () => {
+    const clearAll = async () => {
+        try {
+            await notificationsApi.clearAll();
+        } catch (e) {
+            console.warn("Failed to clear notifications on server:", e);
+        }
         setNotifications([]);
         toast.info("Notification history cleared");
     };
 
-    const handleNotificationClick = (item) => {
-        markAsRead(item.id);
+    const handleNotificationClick = async (item) => {
+        if (item.unread) {
+            await markAsRead(item.id);
+        }
         if (item.link) {
             setIsNotificationOpen(false);
             navigate(item.link);
@@ -182,9 +286,17 @@ const DashboardLayout = () => {
                         title="View HR Profile"
                         data-testid="sidebar-profile-box"
                     >
-                        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-amber-400 to-pink-500 flex items-center justify-center text-white font-bold text-sm shadow-xs shrink-0 group-hover:scale-105 transition-transform">
-                            {initials}
-                        </div>
+                        {user.avatar ? (
+                            <img
+                                src={user.avatar}
+                                alt={user.name || "HR Avatar"}
+                                className="w-10 h-10 rounded-lg object-cover shadow-xs shrink-0 group-hover:scale-105 transition-transform"
+                            />
+                        ) : (
+                            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-amber-400 to-pink-500 flex items-center justify-center text-white font-bold text-sm shadow-xs shrink-0 group-hover:scale-105 transition-transform">
+                                {initials}
+                            </div>
+                        )}
                         <div className="flex-1 min-w-0">
                             <div className="text-sm font-semibold text-white truncate group-hover:text-violet-300 transition-colors">
                                 {user.company || user.name || "My Account"}
@@ -249,9 +361,17 @@ const DashboardLayout = () => {
                             className="flex items-center gap-3 px-3 py-1.5 rounded-full bg-white border border-slate-200 hover:border-violet-300 hover:shadow-xs transition cursor-pointer group"
                             title="View HR Profile"
                         >
-                            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-400 to-pink-500 flex items-center justify-center text-white font-bold text-sm shadow-2xs group-hover:scale-105 transition-transform">
-                                {initials}
-                            </div>
+                            {user.avatar ? (
+                                <img
+                                    src={user.avatar}
+                                    alt={user.name || "HR Avatar"}
+                                    className="w-9 h-9 rounded-full object-cover shadow-2xs group-hover:scale-105 transition-transform"
+                                />
+                            ) : (
+                                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-400 to-pink-500 flex items-center justify-center text-white font-bold text-sm shadow-2xs group-hover:scale-105 transition-transform">
+                                    {initials}
+                                </div>
+                            )}
                             <div className="pr-1">
                                 <div className="text-sm font-semibold text-slate-900 group-hover:text-violet-600 transition-colors leading-tight">
                                     {user.name || user.email?.split("@")[0] || "My Account"}
@@ -355,7 +475,7 @@ const DashboardLayout = () => {
                                     </div>
                                 ) : (
                                     filteredNotifications.map((item) => {
-                                        const IconComponent = item.icon || Bell;
+                                        const IconComponent = resolveIcon(item.icon);
                                         return (
                                             <div
                                                 key={item.id}

@@ -25,10 +25,11 @@ import {
     Settings as SettingsIcon,
     LayoutDashboard
 } from "lucide-react";
-import { jobsApi, candidatesApi, interviewsApi } from "@/services/api";
+import { jobsApi, candidatesApi, interviewsApi, profileApi } from "@/services/api";
 
 const Profile = () => {
     const [activeTab, setActiveTab] = useState("personal");
+    const [saving, setSaving] = useState(false);
 
     // Profile Data State
     const [profile, setProfile] = useState(() => {
@@ -53,18 +54,18 @@ const Profile = () => {
             dob: "",
             displayDob: "",
             email: parsedUser?.email || "",
-            gender: "",
+            gender: "Female",
             phone: parsedUser?.phone || "",
-            location: "",
+            location: "Bengaluru, India",
             jobTitle: parsedUser?.designation || "HR Administrator",
             linkedin: "",
             department: "Human Resources",
             bio: "",
             avatar: parsedUser?.avatar || "",
-            companyName: parsedUser?.company || "",
-            companyWebsite: parsedUser?.website || "",
-            companySize: "",
-            industry: ""
+            companyName: parsedUser?.company || "AvaHire Tech Solutions",
+            companyWebsite: parsedUser?.website || "https://avahire.ai",
+            companySize: "50-250 employees",
+            industry: "Technology & Software"
         };
     });
 
@@ -74,6 +75,33 @@ const Profile = () => {
         interviewsConducted: 0,
         selectedCandidates: 0
     });
+
+    // Fetch live profile from backend on mount
+    useEffect(() => {
+        const fetchRemoteProfile = async () => {
+            try {
+                const remote = await profileApi.getProfile();
+                if (remote) {
+                    setProfile(prev => ({
+                        ...prev,
+                        ...remote,
+                        fullName: remote.fullName || remote.name || prev.fullName,
+                        companyName: remote.companyName || remote.company || prev.companyName,
+                        companyWebsite: remote.companyWebsite || remote.website || prev.companyWebsite,
+                        jobTitle: remote.jobTitle || remote.designation || prev.jobTitle,
+                        displayDob: remote.displayDob || remote.dob || prev.displayDob,
+                        avatar: remote.avatar || prev.avatar
+                    }));
+                    if (remote.avatar) {
+                        setAvatarPhoto(remote.avatar);
+                    }
+                }
+            } catch (e) {
+                console.warn("Notice: Loading profile from local state:", e.message);
+            }
+        };
+        fetchRemoteProfile();
+    }, []);
 
     useEffect(() => {
         const loadOverview = async () => {
@@ -103,39 +131,123 @@ const Profile = () => {
 
     const [avatarPhoto, setAvatarPhoto] = useState(profile.avatar);
 
-    const handleAvatarChange = (e) => {
+    const handleAvatarChange = async (e) => {
         const file = e.target.files?.[0];
         if (file) {
+            // Instant preview
             const reader = new FileReader();
             reader.onload = (uploadEvent) => {
                 const newUrl = uploadEvent.target?.result;
                 setAvatarPhoto(newUrl);
-                setProfile((prev) => ({ ...prev, avatar: newUrl }));
-                toast.success("Profile photo updated!");
             };
             reader.readAsDataURL(file);
+
+            // Upload directly to backend
+            try {
+                const formData = new FormData();
+                formData.append("avatar", file);
+                const res = await profileApi.uploadAvatar(formData);
+                if (res && res.avatar) {
+                    setAvatarPhoto(res.avatar);
+                    setProfile((prev) => ({ ...prev, avatar: res.avatar }));
+
+                    const existingUser = JSON.parse(localStorage.getItem("avahire_user") || "{}");
+                    const updatedUser = { ...existingUser, avatar: res.avatar };
+                    localStorage.setItem("avahire_user", JSON.stringify(updatedUser));
+                    window.dispatchEvent(new CustomEvent("avahire_user_updated", { detail: updatedUser }));
+
+                    toast.success("Profile photo uploaded and saved successfully!");
+                }
+            } catch (uploadErr) {
+                console.error("Failed to upload avatar to server:", uploadErr);
+                toast.error("Failed to upload avatar to server: " + (uploadErr.response?.data?.error || uploadErr.message));
+            }
         }
     };
 
-    const handleSave = (e) => {
-        e?.preventDefault();
-        localStorage.setItem("avahire_hr_profile", JSON.stringify(profile));
+    const handleRemoveAvatar = async () => {
+        try {
+            await profileApi.removeAvatar();
+            setAvatarPhoto("");
+            setProfile((prev) => ({ ...prev, avatar: "" }));
 
-        // Also update avahire_user in localStorage so the header initials and name reflect
-        const existingUser = JSON.parse(localStorage.getItem("avahire_user") || "{}");
-        localStorage.setItem(
-            "avahire_user",
-            JSON.stringify({
-                ...existingUser,
-                name: profile.fullName,
-                email: profile.email,
-                designation: profile.jobTitle,
-                company: profile.companyName
-            })
-        );
+            const existingUser = JSON.parse(localStorage.getItem("avahire_user") || "{}");
+            const updatedUser = { ...existingUser, avatar: "" };
+            localStorage.setItem("avahire_user", JSON.stringify(updatedUser));
+            window.dispatchEvent(new CustomEvent("avahire_user_updated", { detail: updatedUser }));
 
-        toast.success("HR Profile updated successfully!");
+            toast.info("Profile photo removed");
+        } catch (err) {
+            toast.error("Failed to remove profile photo");
+        }
     };
+
+    const handleSave = async (e) => {
+        e?.preventDefault();
+        if (!profile.fullName?.trim()) {
+            toast.error("Full Name is required");
+            return;
+        }
+
+        setSaving(true);
+        try {
+            const updated = await profileApi.updateProfile({
+                ...profile,
+                avatar: avatarPhoto || profile.avatar
+            });
+
+            const refreshedData = updated?.data ? {
+                ...profile,
+                ...updated.data,
+                fullName: updated.data.fullName || updated.data.name || profile.fullName,
+                companyName: updated.data.companyName || updated.data.company || profile.companyName,
+                companyWebsite: updated.data.companyWebsite || updated.data.website || profile.companyWebsite,
+                jobTitle: updated.data.jobTitle || updated.data.designation || profile.jobTitle
+            } : profile;
+
+            setProfile(refreshedData);
+            localStorage.setItem("avahire_hr_profile", JSON.stringify(refreshedData));
+
+            // Also update avahire_user in localStorage so the header initials and name reflect
+            const existingUser = JSON.parse(localStorage.getItem("avahire_user") || "{}");
+            const updatedUser = {
+                ...existingUser,
+                name: refreshedData.fullName,
+                email: refreshedData.email,
+                designation: refreshedData.jobTitle,
+                company: refreshedData.companyName,
+                phone: refreshedData.phone,
+                avatar: avatarPhoto || refreshedData.avatar
+            };
+            localStorage.setItem("avahire_user", JSON.stringify(updatedUser));
+
+            // Broadcast to other components
+            window.dispatchEvent(new CustomEvent("avahire_user_updated", { detail: updatedUser }));
+
+            toast.success("HR Profile updated and saved to PostgreSQL successfully!");
+        } catch (err) {
+            console.error("Failed to save profile:", err);
+            toast.error("Failed to save profile: " + (err.response?.data?.error || err.message));
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const hasPersonal = Boolean(profile.fullName?.trim() && profile.email?.trim());
+    const hasCompany = Boolean(profile.companyName?.trim());
+    const hasEmailVerified = Boolean(profile.email?.trim());
+    const hasPhone = Boolean(profile.phone?.trim());
+    const hasAvatar = Boolean(avatarPhoto || profile.avatar);
+
+    let completionScore = 0;
+    if (hasPersonal) completionScore += 20;
+    if (hasCompany) completionScore += 20;
+    if (hasEmailVerified) completionScore += 20;
+    if (hasPhone) completionScore += 20;
+    if (hasAvatar) completionScore += 20;
+
+    const circumference = 251.2;
+    const strokeOffset = circumference - (circumference * completionScore) / 100;
 
     return (
         <div className="space-y-6 max-w-7xl mx-auto -mt-2" data-testid="hr-profile-page">
@@ -185,6 +297,18 @@ const Profile = () => {
                                 />
                             </label>
                         </div>
+
+                        {avatarPhoto && (
+                            <div>
+                                <button
+                                    type="button"
+                                    onClick={handleRemoveAvatar}
+                                    className="text-[11px] text-rose-500 hover:text-rose-600 font-semibold transition hover:underline"
+                                >
+                                    Remove photo
+                                </button>
+                            </div>
+                        )}
 
                         {/* Name & Badge */}
                         <div>
@@ -558,21 +682,21 @@ const Profile = () => {
                                     strokeWidth="8"
                                     fill="none"
                                 />
-                                {/* Progress arc (85%) */}
+                                {/* Progress arc */}
                                 <circle
                                     cx="50"
                                     cy="50"
                                     r="40"
-                                    className="stroke-violet-600"
+                                    className="stroke-violet-600 transition-all duration-700 ease-out"
                                     strokeWidth="8"
                                     strokeDasharray="251.2"
-                                    strokeDashoffset="37.68"
+                                    strokeDashoffset={strokeOffset}
                                     strokeLinecap="round"
                                     fill="none"
                                 />
                             </svg>
                             <div className="absolute inset-0 flex flex-col items-center justify-center">
-                                <span className="text-2xl font-extrabold text-slate-900 leading-none">85%</span>
+                                <span className="text-2xl font-extrabold text-slate-900 leading-none">{completionScore}%</span>
                                 <span className="text-[10px] text-slate-400 font-semibold mt-1">
                                     Profile<br />Completed
                                 </span>
@@ -585,24 +709,24 @@ const Profile = () => {
 
                         {/* Checklist */}
                         <div className="space-y-2 text-left text-xs pt-2 border-t border-slate-100">
-                            <div className="flex items-center gap-2 text-emerald-600 font-medium">
-                                <CheckCircle2 className="w-4 h-4" />
+                            <div className={`flex items-center gap-2 font-medium ${hasPersonal ? "text-emerald-600" : "text-slate-400"}`}>
+                                {hasPersonal ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4 text-slate-300" />}
                                 <span>Personal Information</span>
                             </div>
-                            <div className="flex items-center gap-2 text-emerald-600 font-medium">
-                                <CheckCircle2 className="w-4 h-4" />
+                            <div className={`flex items-center gap-2 font-medium ${hasCompany ? "text-emerald-600" : "text-slate-400"}`}>
+                                {hasCompany ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4 text-slate-300" />}
                                 <span>Company Information</span>
                             </div>
-                            <div className="flex items-center gap-2 text-emerald-600 font-medium">
-                                <CheckCircle2 className="w-4 h-4" />
+                            <div className={`flex items-center gap-2 font-medium ${hasEmailVerified ? "text-emerald-600" : "text-slate-400"}`}>
+                                {hasEmailVerified ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4 text-slate-300" />}
                                 <span>Email Verified</span>
                             </div>
-                            <div className="flex items-center gap-2 text-emerald-600 font-medium">
-                                <CheckCircle2 className="w-4 h-4" />
+                            <div className={`flex items-center gap-2 font-medium ${hasPhone ? "text-emerald-600" : "text-slate-400"}`}>
+                                {hasPhone ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4 text-slate-300" />}
                                 <span>Phone Verified</span>
                             </div>
-                            <div className="flex items-center gap-2 text-slate-400 font-medium">
-                                <Circle className="w-4 h-4 text-slate-300" />
+                            <div className={`flex items-center gap-2 font-medium ${hasAvatar ? "text-emerald-600" : "text-slate-400"}`}>
+                                {hasAvatar ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4 text-slate-300" />}
                                 <span>Profile Photo</span>
                             </div>
                         </div>

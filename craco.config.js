@@ -46,7 +46,6 @@ module.exports = {
     const originalSetupMiddlewares = devServerConfig.setupMiddlewares;
     devServerConfig.setupMiddlewares = (middlewares, devServer) => {
       const express = require("express");
-      const apiRouter = require("./server/routes");
 
       devServer.app.use(express.json({ limit: "25mb" }));
       devServer.app.use(express.urlencoded({ extended: true, limit: "25mb" }));
@@ -76,7 +75,16 @@ module.exports = {
       devServer.app.get("/api/db-status", (req, res) => {
         res.status(200).json(getConnectionStatus());
       });
-      devServer.app.use("/api", apiRouter);
+      devServer.app.use("/api", (req, res, next) => {
+        const serverDir = path.resolve(__dirname, "server");
+        Object.keys(require.cache).forEach((key) => {
+          if (key.startsWith(serverDir)) {
+            delete require.cache[key];
+          }
+        });
+        const currentApiRouter = require("./server/routes");
+        currentApiRouter(req, res, next);
+      });
 
       if (originalSetupMiddlewares) {
         return originalSetupMiddlewares(middlewares, devServer);

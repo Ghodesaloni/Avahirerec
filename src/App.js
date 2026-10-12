@@ -107,6 +107,7 @@ function App() {
             <Route path="calendar" element={<CalendarPage />} />
             <Route path="settings" element={<Settings />} />
             <Route path="profile" element={<Profile />} />
+            <Route path="notifications" element={<Navigate to="/app/dashboard?notifications=open" replace />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />
