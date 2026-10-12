@@ -1,0 +1,9 @@
+{
+  "name": "avahire-server-libs",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "docx": "^8.5.0",
+    "exceljs": "^4.4.0"
+  }
+}

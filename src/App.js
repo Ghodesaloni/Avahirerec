@@ -32,6 +32,7 @@ import EmailCenter from "@/pages/dashboard/emailcenter";
 import CalendarPage from "@/pages/dashboard/calenderpage";
 import Settings from "@/pages/dashboard/settings";
 import Profile from "@/pages/dashboard/Profile";
+import ReportsDownloads from "@/pages/dashboard/ReportsDownloads";
 
 const RequireAuth = ({ children }) => {
   const user = localStorage.getItem("avahire_user");
@@ -98,6 +99,7 @@ function App() {
             <Route path="jobs" element={<Jobs />} />
             <Route path="resumes" element={<Resumes />} />
             <Route path="candidates" element={<Candidates />} />
+            <Route path="reports" element={<ReportsDownloads />} />
             <Route path="interviewee" element={<Navigate to="/app/interviews?tab=interviewee" replace />} />
             <Route path="interviewees" element={<Navigate to="/app/interviews?tab=interviewee" replace />} />
             <Route path="interviews" element={<Interviews />} />

@@ -1,6 +1,8 @@
 const { readData, writeData } = require("./dbEngine");
 const { getPool } = require("./postgres");
 const { evaluateTranscriptAlgorithmically } = require("../services/interviewEvaluatorService");
+const excelReportService = require("../services/excelReportService");
+const transcriptDocService = require("../services/transcriptDocService");
 
 const COLLECTION = "candidates";
 
@@ -70,11 +72,14 @@ class CandidatesDatabase {
 
       if (filters.userEmail) {
         const emailLower = filters.userEmail.toLowerCase().trim();
-        params.push(emailLower);
         if (emailLower === "salonighode@gmail.com" || emailLower === "salonighode3@gmail.com") {
           conditions.push(`(LOWER(created_by) IN ('salonighode@gmail.com', 'salonighode3@gmail.com') OR LOWER(user_email) IN ('salonighode@gmail.com', 'salonighode3@gmail.com'))`);
+        } else if (emailLower === "snehal.harde2935@gmail.com" || emailLower === "snehalharde09@gmail.com" || emailLower === "sneha.harde2935@gmail.com") {
+          conditions.push(`(LOWER(created_by) IN ('snehal.harde2935@gmail.com', 'snehalharde09@gmail.com', 'sneha.harde2935@gmail.com') OR LOWER(user_email) IN ('snehal.harde2935@gmail.com', 'snehalharde09@gmail.com', 'sneha.harde2935@gmail.com'))`);
         } else {
-          conditions.push(`(LOWER(created_by) = $${params.length} OR LOWER(user_email) = $${params.length})`);
+          params.push(emailLower);
+          const idx = params.length;
+          conditions.push(`(LOWER(created_by) = $${idx} OR LOWER(user_email) = $${idx})`);
         }
       }
 
@@ -173,6 +178,15 @@ class CandidatesDatabase {
       }
     }
 
+    const isSelected = evaluatedStatus === "Selected";
+    const selectionDate = data.selectionDate || (isSelected ? excelReportService.formatDisplayDate(new Date()) : "");
+    const selectionTimestamp = data.selectionTimestamp || (isSelected ? String(Date.now()) : "");
+    const transcriptUrl = data.transcriptUrl || `/api/candidates/${encodeURIComponent(id)}/transcript/download`;
+    const transcriptPath = data.transcriptPath || "";
+    const department = data.department || data.dept || "Engineering";
+    const recordingStatus = data.recordingStatus || (data.audioUrl || data.audio_url ? "completed" : "pending");
+    const jobId = data.jobId || data.job_id || "";
+
     const newCand = {
       id,
       name: data.name || "Candidate",
@@ -187,6 +201,13 @@ class CandidatesDatabase {
       score: evaluatedScore,
       total_score: evaluatedScore,
       status: evaluatedStatus,
+      selectionDate,
+      selectionTimestamp,
+      transcriptPath,
+      transcriptUrl,
+      department,
+      recordingStatus,
+      jobId,
       notes: data.notes || `Live interview evaluated based on technical correctness of answers and level of confidence. Overall score: ${evaluatedScore}/100 (${evaluatedStatus}).`,
       summaryPoints: evaluatedSummaryPoints,
       recommendation: evaluatedRecommendation,
@@ -218,9 +239,11 @@ class CandidatesDatabase {
         INSERT INTO public.candidates (
           id, name, email, phone, role, avatar, interview_date, timestamp,
           duration, mode, score, status, notes, summary_points, recommendation,
-          transcript, evaluation_breakdown, question_evaluations, audio_url, audio_path, created_by, user_email, created_at
+          transcript, evaluation_breakdown, question_evaluations, audio_url, audio_path,
+          selection_date, selection_timestamp, transcript_path, transcript_url,
+          department, recording_status, job_id, created_by, user_email, created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, NOW())
         ON CONFLICT (id) DO UPDATE SET
           name = EXCLUDED.name,
           email = EXCLUDED.email,
@@ -239,6 +262,13 @@ class CandidatesDatabase {
           question_evaluations = EXCLUDED.question_evaluations,
           audio_url = COALESCE(EXCLUDED.audio_url, public.candidates.audio_url),
           audio_path = COALESCE(EXCLUDED.audio_path, public.candidates.audio_path),
+          selection_date = EXCLUDED.selection_date,
+          selection_timestamp = EXCLUDED.selection_timestamp,
+          transcript_path = COALESCE(EXCLUDED.transcript_path, public.candidates.transcript_path),
+          transcript_url = COALESCE(EXCLUDED.transcript_url, public.candidates.transcript_url),
+          department = EXCLUDED.department,
+          recording_status = EXCLUDED.recording_status,
+          job_id = EXCLUDED.job_id,
           created_by = EXCLUDED.created_by,
           user_email = EXCLUDED.user_email
         RETURNING *;
@@ -265,6 +295,13 @@ class CandidatesDatabase {
         JSON.stringify(newCand.question_evaluations),
         newCand.audioUrl,
         newCand.audioPath,
+        newCand.selectionDate,
+        newCand.selectionTimestamp,
+        newCand.transcriptPath,
+        newCand.transcriptUrl,
+        newCand.department,
+        newCand.recordingStatus,
+        newCand.jobId,
         newCand.createdBy,
         newCand.userEmail
       ];
@@ -272,6 +309,30 @@ class CandidatesDatabase {
       await p.query(query, values);
     } catch (err) {
       console.warn("PostgreSQL candidate insert notice:", err.message);
+    }
+
+    // Auto-generate transcript Word document (.docx) in background
+    transcriptDocService.generateTranscriptDoc(newCand).then(savedDoc => {
+      newCand.transcriptPath = savedDoc.filePath;
+      newCand.transcriptUrl = savedDoc.downloadUrl;
+      const curList = readData(COLLECTION, []);
+      const cIdx = curList.findIndex(c => c.id === newCand.id);
+      if (cIdx >= 0) {
+        curList[cIdx].transcriptPath = savedDoc.filePath;
+        curList[cIdx].transcriptUrl = savedDoc.downloadUrl;
+        writeData(COLLECTION, curList);
+      }
+    }).catch(err => {
+      console.warn("[CandidatesDB] Auto docx generation notice:", err.message);
+    });
+
+    // If candidate status is Selected, sync daily reports
+    if (newCand.status === "Selected") {
+      this.getAll().then(allCands => {
+        excelReportService.syncAllReports(allCands).catch(err => {
+          console.warn("[CandidatesDB] Excel report sync notice:", err.message);
+        });
+      }).catch(() => {});
     }
 
     return newCand;
@@ -282,7 +343,28 @@ class CandidatesDatabase {
     const list = readData(COLLECTION, []);
     const idx = list.findIndex(c => c.id === id);
     let updatedItem = null;
+    let statusChanged = false;
+
     if (idx >= 0) {
+      const existing = list[idx];
+      // Automatically handle selection date
+      if (updates.status === "Selected") {
+        if (!updates.selectionDate && !existing.selectionDate) {
+          updates.selectionDate = excelReportService.formatDisplayDate(new Date());
+          updates.selectionTimestamp = String(Date.now());
+        }
+      } else if (updates.status && updates.status !== "Selected") {
+        // If changed away from Selected, clear selectionDate so report is updated
+        if (existing.status === "Selected") {
+          updates.selectionDate = "";
+          updates.selectionTimestamp = "";
+        }
+      }
+
+      if (updates.status !== undefined && updates.status !== existing.status) {
+        statusChanged = true;
+      }
+
       list[idx] = { ...list[idx], ...updates, updatedAt: new Date().toISOString() };
       updatedItem = list[idx];
       writeData(COLLECTION, list);
@@ -297,6 +379,34 @@ class CandidatesDatabase {
       if (updates.status !== undefined) {
         params.push(updates.status);
         setClauses.push(`status = $${params.length}`);
+      }
+      if (updates.selectionDate !== undefined) {
+        params.push(updates.selectionDate);
+        setClauses.push(`selection_date = $${params.length}`);
+      }
+      if (updates.selectionTimestamp !== undefined) {
+        params.push(updates.selectionTimestamp);
+        setClauses.push(`selection_timestamp = $${params.length}`);
+      }
+      if (updates.transcriptPath !== undefined) {
+        params.push(updates.transcriptPath);
+        setClauses.push(`transcript_path = $${params.length}`);
+      }
+      if (updates.transcriptUrl !== undefined) {
+        params.push(updates.transcriptUrl);
+        setClauses.push(`transcript_url = $${params.length}`);
+      }
+      if (updates.department !== undefined) {
+        params.push(updates.department);
+        setClauses.push(`department = $${params.length}`);
+      }
+      if (updates.recordingStatus !== undefined) {
+        params.push(updates.recordingStatus);
+        setClauses.push(`recording_status = $${params.length}`);
+      }
+      if (updates.jobId !== undefined) {
+        params.push(updates.jobId);
+        setClauses.push(`job_id = $${params.length}`);
       }
       if (updates.notes !== undefined) {
         params.push(updates.notes);
@@ -332,11 +442,20 @@ class CandidatesDatabase {
         const query = `UPDATE public.candidates SET ${setClauses.join(", ")} WHERE id = $${params.length} RETURNING *;`;
         const res = await p.query(query, params);
         if (res.rows && res.rows[0]) {
-          return this._mapRow(res.rows[0]);
+          updatedItem = this._mapRow(res.rows[0]);
         }
       }
     } catch (err) {
       console.warn("PostgreSQL candidate update notice:", err.message);
+    }
+
+    // If candidate status is or was Selected, sync Excel reports immediately
+    if (statusChanged || updates.status === "Selected" || (updatedItem && updatedItem.status === "Selected")) {
+      this.getAll().then(allCands => {
+        excelReportService.syncAllReports(allCands).catch(err => {
+          console.warn("[CandidatesDB] Excel report sync notice on update:", err.message);
+        });
+      }).catch(() => {});
     }
 
     return updatedItem;
@@ -352,11 +471,14 @@ class CandidatesDatabase {
     try {
       const p = getPool();
       await p.query("DELETE FROM public.candidates WHERE id = $1", [id]);
-      return true;
     } catch (err) {
       console.warn("PostgreSQL candidate delete notice:", err.message);
-      return filtered.length !== list.length;
     }
+
+    // Sync reports after deletion
+    excelReportService.syncAllReports(filtered).catch(() => {});
+
+    return true;
   }
 
   _mapRow(row) {
@@ -376,6 +498,13 @@ class CandidatesDatabase {
       score: row.score,
       total_score: row.score,
       status: row.status,
+      selectionDate: row.selection_date || row.selectionDate || (row.status === "Selected" ? excelReportService.formatDisplayDate(row.updated_at || row.created_at || new Date()) : ""),
+      selectionTimestamp: row.selection_timestamp || row.selectionTimestamp || "",
+      transcriptPath: row.transcript_path || row.transcriptPath || "",
+      transcriptUrl: row.transcript_url || row.transcriptUrl || `/api/candidates/${encodeURIComponent(row.id)}/transcript/download`,
+      department: row.department || row.dept || "Engineering",
+      recordingStatus: row.recording_status || (row.audio_url || row.audioUrl ? "completed" : "pending"),
+      jobId: row.job_id || row.jobId || "",
       notes: row.notes,
       summaryPoints: typeof row.summary_points === "string" ? JSON.parse(row.summary_points) : (row.summary_points || []),
       recommendation: row.recommendation,
@@ -385,6 +514,7 @@ class CandidatesDatabase {
       qaEvaluations: qEvals,
       question_evaluations: qEvals,
       audioUrl: row.audio_url || row.audioUrl || "",
+      audioPath: row.audio_path || row.audioPath || "",
       createdBy: row.created_by,
       userEmail: row.user_email,
       createdAt: row.created_at

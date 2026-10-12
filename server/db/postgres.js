@@ -466,6 +466,13 @@ async function initTables() {
         ALTER TABLE public.candidates ADD COLUMN IF NOT EXISTS question_evaluations JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE public.candidates ADD COLUMN IF NOT EXISTS audio_url TEXT;
         ALTER TABLE public.candidates ADD COLUMN IF NOT EXISTS audio_path TEXT;
+        ALTER TABLE public.candidates ADD COLUMN IF NOT EXISTS selection_date TEXT;
+        ALTER TABLE public.candidates ADD COLUMN IF NOT EXISTS selection_timestamp TEXT;
+        ALTER TABLE public.candidates ADD COLUMN IF NOT EXISTS transcript_path TEXT;
+        ALTER TABLE public.candidates ADD COLUMN IF NOT EXISTS transcript_url TEXT;
+        ALTER TABLE public.candidates ADD COLUMN IF NOT EXISTS department VARCHAR(255);
+        ALTER TABLE public.candidates ADD COLUMN IF NOT EXISTS recording_status VARCHAR(50) DEFAULT 'completed';
+        ALTER TABLE public.candidates ADD COLUMN IF NOT EXISTS job_id VARCHAR(255);
         ALTER TABLE public.candidate_portal_sessions ADD COLUMN IF NOT EXISTS audio_url TEXT;
       `);
 

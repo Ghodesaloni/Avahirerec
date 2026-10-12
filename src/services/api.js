@@ -299,6 +299,49 @@ export const candidatesApi = {
   },
   getAudioUrl: (candidateId) => {
     return `/api/candidates/${encodeURIComponent(candidateId)}/audio`;
+  },
+  getAudioDownloadUrl: (candidateId) => {
+    return `/api/candidates/${encodeURIComponent(candidateId)}/audio/download`;
+  },
+  getTranscriptDownloadUrl: (candidateId) => {
+    return `/api/candidates/${encodeURIComponent(candidateId)}/transcript/download`;
+  },
+  getTranscriptInfo: async (candidateId) => {
+    const res = await api.get(`/candidates/${candidateId}/transcript`);
+    return res.data;
+  },
+  generateTranscript: async (candidateId) => {
+    const res = await api.post(`/candidates/${candidateId}/transcript/generate`);
+    return res.data;
+  }
+};
+
+export const reportsApi = {
+  getSummary: async (params = {}) => {
+    const res = await api.get("/reports/summary", { params });
+    return res.data;
+  },
+  getDates: async (params = {}) => {
+    const res = await api.get("/reports/selected-candidates/dates", { params });
+    return res.data;
+  },
+  getTodayReportUrl: (userEmail) => {
+    const emailParam = userEmail ? `?userEmail=${encodeURIComponent(userEmail)}` : "";
+    return `/api/reports/selected-candidates/today${emailParam}`;
+  },
+  getDateReportUrl: (date, userEmail) => {
+    const emailParam = userEmail ? `?userEmail=${encodeURIComponent(userEmail)}` : "";
+    return `/api/reports/selected-candidates/date/${encodeURIComponent(date)}${emailParam}`;
+  },
+  getAllDatesReportUrl: (userEmail) => {
+    const emailParam = userEmail ? `?userEmail=${encodeURIComponent(userEmail)}` : "";
+    return `/api/reports/selected-candidates/all${emailParam}`;
+  },
+  regenerate: async (userEmail) => {
+    const res = await api.post("/reports/regenerate", {}, {
+      params: userEmail ? { userEmail } : {}
+    });
+    return res.data;
   }
 };
 

@@ -29,6 +29,7 @@ const menu = [
     { to: "/app/email", label: "Email Center", icon: "fa-envelope" },
     { to: "/app/calendar", label: "Calendar", icon: "fa-calendar" },
     { to: "/app/candidates", label: "Candidates", icon: "fa-users" },
+    { to: "/app/reports", label: "Reports", icon: "fa-file-excel" },
     { to: "/app/settings", label: "Settings", icon: "fa-gear" },
 ];
 

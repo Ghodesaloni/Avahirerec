@@ -1,9 +1,12 @@
 const express = require("express");
 const router = express.Router();
+const path = require("path");
 const multer = require("multer");
 const candidatesDb = require("../db/candidatesDb");
 const automatedEmailService = require("../services/automatedEmailService");
 const recordingStorageService = require("../services/recordingStorageService");
+const transcriptDocService = require("../services/transcriptDocService");
+const fs = require("fs");
 
 const audioUpload = multer({
   storage: multer.memoryStorage(),
@@ -91,14 +94,155 @@ router.get("/:id/recording", async (req, res) => {
       data: {
         candidateId,
         audioUrl: `/api/candidates/${encodeURIComponent(candidateId)}/audio`,
+        downloadUrl: `/api/candidates/${encodeURIComponent(candidateId)}/audio/download`,
         size: fileInfo?.size || 0,
         filename: fileInfo?.filename || "recording.webm",
         mimeType: fileInfo?.mimeType || "audio/webm",
-        duration: candidate?.duration || "N/A"
+        duration: candidate?.duration || "N/A",
+        recordingStatus: candidate?.recordingStatus || "completed"
       }
     });
   } catch (err) {
     console.error("[CandidatesAPI] Error getting candidate recording metadata:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/candidates/:id/audio/download or /api/candidates/:id/recording/download - Download audio recording
+router.get(["/:id/audio/download", "/:id/recording/download"], async (req, res) => {
+  try {
+    const candidateId = req.params.id;
+    let fileInfo = recordingStorageService.findRecordingFile(candidateId);
+    let candidate = await candidatesDb.getById(candidateId);
+
+    if (!fileInfo && candidate && candidate.linkCode) {
+      fileInfo = recordingStorageService.findRecordingFile(candidate.linkCode);
+    }
+
+    if (!fileInfo) {
+      return res.status(404).json({
+        success: false,
+        error: `Audio recording not found for candidate ${candidateId}`
+      });
+    }
+
+    const candidateName = candidate?.name ? candidate.name.replace(/[^a-zA-Z0-9_-]/g, "_") : "candidate";
+    const ext = path.extname(fileInfo.filePath) || ".webm";
+    const downloadFilename = `Interview_Recording_${candidateName}_${candidateId}${ext}`;
+
+    res.setHeader("Content-Disposition", `attachment; filename="${downloadFilename}"`);
+    res.setHeader("Content-Type", fileInfo.mimeType || "audio/webm");
+    res.setHeader("Content-Length", fileInfo.size);
+
+    const stream = fs.createReadStream(fileInfo.filePath);
+    stream.pipe(res);
+  } catch (err) {
+    console.error("[CandidatesAPI] Error downloading audio recording:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/candidates/:id/transcript/download - Download Word Document (.docx) transcript
+router.get("/:id/transcript/download", async (req, res) => {
+  try {
+    const candidateId = req.params.id;
+    let candidate = await candidatesDb.getById(candidateId);
+
+    if (!candidate) {
+      return res.status(404).json({
+        success: false,
+        error: `Candidate not found with id ${candidateId}`
+      });
+    }
+
+    let docInfo = transcriptDocService.findTranscriptFile(candidateId);
+    if (!docInfo || !fs.existsSync(docInfo.filePath)) {
+      // Generate on the fly
+      docInfo = await transcriptDocService.generateTranscriptDoc(candidate);
+      await candidatesDb.update(candidateId, {
+        transcriptPath: docInfo.filePath,
+        transcriptUrl: docInfo.downloadUrl
+      }).catch(() => {});
+    }
+
+    const candidateName = candidate.name ? candidate.name.replace(/[^a-zA-Z0-9_-]/g, "_") : "Candidate";
+    const downloadFilename = `${candidateName}_Interview_Transcript_${candidateId}.docx`;
+
+    res.setHeader("Content-Disposition", `attachment; filename="${downloadFilename}"`);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+
+    const fileStream = fs.createReadStream(docInfo.filePath);
+    fileStream.pipe(res);
+  } catch (err) {
+    console.error("[CandidatesAPI] Error downloading transcript document:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/candidates/:id/transcript - Get transcript document metadata
+router.get("/:id/transcript", async (req, res) => {
+  try {
+    const candidateId = req.params.id;
+    const candidate = await candidatesDb.getById(candidateId);
+
+    if (!candidate) {
+      return res.status(404).json({ success: false, error: "Candidate not found" });
+    }
+
+    let docInfo = transcriptDocService.findTranscriptFile(candidateId);
+    if (!docInfo) {
+      docInfo = await transcriptDocService.generateTranscriptDoc(candidate);
+      await candidatesDb.update(candidateId, {
+        transcriptPath: docInfo.filePath,
+        transcriptUrl: docInfo.downloadUrl
+      }).catch(() => {});
+    }
+
+    res.json({
+      success: true,
+      data: {
+        candidateId,
+        candidateName: candidate.name,
+        filename: docInfo.filename,
+        downloadUrl: `/api/candidates/${encodeURIComponent(candidateId)}/transcript/download`,
+        fileSize: docInfo.fileSize,
+        dialogueCount: (candidate.transcript || []).length
+      }
+    });
+  } catch (err) {
+    console.error("[CandidatesAPI] Error getting transcript metadata:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/candidates/:id/transcript/generate - Force generate / regenerate transcript docx
+router.post("/:id/transcript/generate", async (req, res) => {
+  try {
+    const candidateId = req.params.id;
+    const candidate = await candidatesDb.getById(candidateId);
+
+    if (!candidate) {
+      return res.status(404).json({ success: false, error: "Candidate not found" });
+    }
+
+    const docInfo = await transcriptDocService.generateTranscriptDoc(candidate);
+    await candidatesDb.update(candidateId, {
+      transcriptPath: docInfo.filePath,
+      transcriptUrl: docInfo.downloadUrl
+    });
+
+    res.json({
+      success: true,
+      message: "Interview transcript Word document generated successfully",
+      data: {
+        candidateId,
+        filename: docInfo.filename,
+        downloadUrl: docInfo.downloadUrl,
+        fileSize: docInfo.fileSize
+      }
+    });
+  } catch (err) {
+    console.error("[CandidatesAPI] Error generating transcript document:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });

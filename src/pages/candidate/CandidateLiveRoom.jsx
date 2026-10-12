@@ -1386,6 +1386,19 @@ const CandidateLiveRoom = () => {
             // 2. Save candidate in PostgreSQL database and state
             await candidatesApi.create(newCandPayload);
 
+            // Trigger automatic download of Word document transcript (.docx) to local computer if browser permits
+            try {
+                const autoLink = document.createElement("a");
+                autoLink.href = `/api/candidates/${encodeURIComponent(candidateId)}/transcript/download`;
+                autoLink.download = `${(candidateName || "Candidate").replace(/[^a-zA-Z0-9_-]/g, "_")}_Interview_Transcript_${candidateId}.docx`;
+                document.body.appendChild(autoLink);
+                autoLink.click();
+                document.body.removeChild(autoLink);
+                console.log("[CandidateLiveRoom] Triggered automatic interview transcript download (.docx)");
+            } catch (dlErr) {
+                console.warn("[CandidateLiveRoom] Automatic browser download notice:", dlErr);
+            }
+
             // 3. Remove the candidate/interview from the active interview queue
             if (interviewData?.id) {
                 await interviewsApi.delete(interviewData.id).catch(() => {});
