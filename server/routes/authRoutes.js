@@ -440,9 +440,8 @@ router.post("/forgot-password", async (req, res) => {
 
     return res.json({
       success: true,
-      message: `A unique password recovery email has been dispatched to ${cleanEmail}. Please check your inbox for instructions to reset your password.`,
+      message: `A password recovery email has been dispatched directly to ${cleanEmail}. Please check your inbox for the reset link and recovery instructions.`,
       email: cleanEmail,
-      token: recoveryToken,
       mode: emailDispatch?.mode || "dispatched",
     });
   } catch (err) {

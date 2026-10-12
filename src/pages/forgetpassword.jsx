@@ -16,6 +16,7 @@ import {
   Eye,
   EyeOff,
   RefreshCw,
+  MailCheck,
 } from "lucide-react";
 
 const ForgotPassword = () => {
@@ -26,7 +27,7 @@ const ForgotPassword = () => {
 
   // Step state:
   // "request" -> enter email to receive unique recovery token
-  // "sent" -> token sent confirmation card with option to enter token
+  // "sent" -> email sent confirmation card directing user to their inbox
   // "reset" -> enter token & new password
   // "success" -> success confirmation card
   const [step, setStep] = useState(urlToken ? "reset" : "request");
@@ -41,10 +42,6 @@ const ForgotPassword = () => {
   const [verifyingToken, setVerifyingToken] = useState(false);
   const [tokenError, setTokenError] = useState("");
   const [verifiedEmail, setVerifiedEmail] = useState("");
-
-  // Dev recovery preview helper (displays token if returned from mock/dev server so user can test seamlessly)
-  const [dispatchedToken, setDispatchedToken] = useState("");
-  const [dispatchedMode, setDispatchedMode] = useState("");
 
   // If token is provided in URL, automatically verify its validity
   useEffect(() => {
@@ -93,14 +90,8 @@ const ForgotPassword = () => {
     setLoading(true);
     setTokenError("");
     try {
-      const res = await authApi.forgotPassword(cleanEmail);
-      toast.success("Recovery token dispatched to your email!");
-      if (res?.token) {
-        setDispatchedToken(res.token);
-      }
-      if (res?.mode) {
-        setDispatchedMode(res.mode);
-      }
+      await authApi.forgotPassword(cleanEmail);
+      toast.success(`Password reset email sent directly to ${cleanEmail}!`);
       setStep("sent");
     } catch (err) {
       console.error("Forgot password request error:", err);
@@ -240,61 +231,56 @@ const ForgotPassword = () => {
         {/* STEP 2: Sent Confirmation Notice & Action */}
         {step === "sent" && (
           <div className="space-y-6 text-center">
-            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-sm">
-              <CheckCircle2 size={32} />
+            <div className="w-16 h-16 bg-violet-100 text-violet-600 rounded-full flex items-center justify-center mx-auto shadow-sm">
+              <MailCheck size={32} />
             </div>
 
             <div>
               <h2 className="text-2xl font-black text-slate-900 tracking-tight">
-                Recovery Token Sent!
+                Check Your Inbox
               </h2>
               <p className="text-slate-600 text-sm mt-2 leading-relaxed">
-                A unique recovery token has been dispatched to:
+                A secure password recovery email has been sent directly to:
               </p>
-              <div className="mt-2 font-mono font-bold text-violet-700 bg-violet-50 py-2 px-3 rounded-xl inline-block text-xs border border-violet-100">
+              <div className="mt-2 font-mono font-bold text-violet-700 bg-violet-50 py-2 px-3 rounded-xl inline-block text-xs border border-violet-100 break-all">
                 {email}
               </div>
             </div>
 
-            {/* If dev token available, display it for effortless testing */}
-            {dispatchedToken && (
-              <div className="bg-slate-50 border border-dashed border-violet-300 rounded-2xl p-4 text-left">
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-[11px] font-bold text-violet-700 uppercase tracking-wider">
-                    Recovery Token
-                  </span>
-                  <span className="text-[10px] bg-violet-100 text-violet-700 font-semibold px-2 py-0.5 rounded-full">
-                    {dispatchedMode === "aws_ses" ? "Delivered via AWS SES" : (dispatchedMode === "live_smtp" ? "Delivered via SMTP" : "Token Ready")}
-                  </span>
-                </div>
-                <div className="bg-white p-2.5 rounded-lg border border-slate-200 font-mono text-xs font-extrabold text-slate-800 break-all select-all">
-                  {dispatchedToken}
-                </div>
-                <p className="text-[11px] text-slate-500 mt-2">
-                  Check your Gmail inbox or click below to proceed with this recovery token.
-                </p>
+            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 text-left space-y-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                <CheckCircle2 size={16} className="text-emerald-500 shrink-0" />
+                <span>Next steps from your email:</span>
               </div>
-            )}
+              <ul className="text-xs text-slate-600 space-y-1.5 pl-5 list-disc leading-relaxed">
+                <li>Open the email sent from <strong>AvaHire Security</strong>.</li>
+                <li>Click the <strong>Reset Password Securely</strong> button in the email to open the reset form automatically.</li>
+                <li>Or copy the <strong>Unique Recovery Token</strong> from your email and enter it below.</li>
+              </ul>
+              <p className="text-[11px] text-slate-400 pt-1">
+                Note: If you do not see it within a minute, please check your spam or junk folder.
+              </p>
+            </div>
 
             <div className="space-y-3 pt-2">
               <button
                 type="button"
                 onClick={() => {
-                  if (dispatchedToken) setToken(dispatchedToken);
+                  setToken("");
                   setStep("reset");
                 }}
                 className="btn-primary w-full py-3.5 rounded-xl text-white font-semibold flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-violet-500/20"
               >
-                <span>Enter Token &amp; Reset Password</span>
+                <span>Enter Token from Email &amp; Reset Password</span>
                 <ArrowRight size={16} />
               </button>
 
               <button
                 type="button"
                 onClick={() => setStep("request")}
-                className="w-full py-2.5 rounded-xl text-slate-600 text-xs font-semibold hover:bg-slate-50 transition-colors"
+                className="w-full py-2.5 rounded-xl text-slate-600 text-xs font-semibold hover:bg-slate-50 transition-colors cursor-pointer"
               >
-                Didn't receive it? Re-enter email
+                Didn't receive email? Re-enter email address
               </button>
             </div>
 

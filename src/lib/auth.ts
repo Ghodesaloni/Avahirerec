@@ -1,5 +1,5 @@
-import { db } from '../db/index.ts';
-import { users } from '../db/schema.ts';
+import { db } from '../db/index';
+import { users } from '../db/schema';
 import { eq, or } from 'drizzle-orm';
 
 /**
