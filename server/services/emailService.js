@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+require("dotenv").config({ override: true });
 const nodemailer = require("nodemailer");
 const { SESClient, SendEmailCommand } = require("@aws-sdk/client-ses");
 const emailCenterDb = require("../db/emailCenterDb");
@@ -75,6 +76,7 @@ function getFormattedFrom(customName) {
 }
 
 function getTransporter() {
+  require("dotenv").config({ override: true });
   // 1. Primary: Given SMTP / Gmail Transporter from .env
   const rawHost = (process.env.SMTP_HOST || "").trim();
   const rawPort = process.env.SMTP_PORT;
