@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { resumesApi, jobsApi, interviewsApi } from "@/services/api";
+import { resumesApi, jobsApi } from "@/services/api";
 import {
     Search,
     Filter,
@@ -50,7 +50,7 @@ import {
     FolderKanban,
     Tag
 } from "lucide-react";
-import { addOrUpdateInterview } from "@/utils/interviewStore";
+// interviewStore import removed - interviews managed in dedicated interviews hub
 
 // Comprehensive career fields / domains for folder separation and filtering
 const CORE_FIELDS = [
@@ -122,21 +122,11 @@ const Resumes = () => {
     const [searchQuery, setSearchQuery] = useState("");
     const [sortBy, setSortBy] = useState("Highest ATS");
     const [selectedRowIds, setSelectedRowIds] = useState([]);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [pageSize, setPageSize] = useState(10);
     const [isUploading, setIsUploading] = useState(false);
     const [showFullProfileModal, setShowFullProfileModal] = useState(false);
     const [profileModalTab, setProfileModalTab] = useState("overview");
-    const [showInterviewModal, setShowInterviewModal] = useState(false);
-    const [schedRound, setSchedRound] = useState("Technical Screening Round (45 mins)");
-    const [schedDate, setSchedDate] = useState("");
-    const [schedTime, setSchedTime] = useState("");
-    const [schedDuration, setSchedDuration] = useState(() => {
-        try {
-            const ivSettings = JSON.parse(localStorage.getItem("avahire_interview_settings") || "{}");
-            return ivSettings.duration || "45 Minutes";
-        } catch {
-            return "45 Minutes";
-        }
-    });
     const [preferences, setPreferences] = useState(() => {
         try {
             return JSON.parse(localStorage.getItem("avahire_settings_preferences") || "{}");
@@ -144,8 +134,6 @@ const Resumes = () => {
             return {};
         }
     });
-    const [generatedLinkData, setGeneratedLinkData] = useState(null);
-    const [copiedInterviewLink, setCopiedInterviewLink] = useState(false);
     const [showFilterModal, setShowFilterModal] = useState(false);
     const [filterRole, setFilterRole] = useState("All");
     const [filterMinScore, setFilterMinScore] = useState(0);
@@ -153,27 +141,18 @@ const Resumes = () => {
     const [openActionMenuId, setOpenActionMenuId] = useState(null);
     const [isFieldDropdownOpen, setIsFieldDropdownOpen] = useState(false);
     const [isJobDropdownOpen, setIsJobDropdownOpen] = useState(false);
-    const [interviews, setInterviews] = useState([]);
 
-    // Preferences & Interview Settings sync
+    // Preferences sync
     useEffect(() => {
         const handlePrefUpdate = (e) => {
             const prefs = e.detail || JSON.parse(localStorage.getItem("avahire_settings_preferences") || "{}");
             setPreferences(prefs);
         };
-        const handleIvSettingsUpdate = (e) => {
-            const ivSettings = e.detail || JSON.parse(localStorage.getItem("avahire_interview_settings") || "{}");
-            if (ivSettings.duration) {
-                setSchedDuration(ivSettings.duration);
-            }
-        };
 
         window.addEventListener("avahire_preferences_updated", handlePrefUpdate);
-        window.addEventListener("avahire_interview_settings_updated", handleIvSettingsUpdate);
 
         return () => {
             window.removeEventListener("avahire_preferences_updated", handlePrefUpdate);
-            window.removeEventListener("avahire_interview_settings_updated", handleIvSettingsUpdate);
         };
     }, []);
 
@@ -214,10 +193,9 @@ const Resumes = () => {
     useEffect(() => {
         const fetchInitialData = async () => {
             try {
-                const [resumesData, jobsData, interviewsData] = await Promise.allSettled([
+                const [resumesData, jobsData] = await Promise.allSettled([
                     resumesApi.getAll(),
-                    jobsApi.getAll(),
-                    interviewsApi.getAll()
+                    jobsApi.getAll()
                 ]);
 
                 if (jobsData.status === "fulfilled" && Array.isArray(jobsData.value)) {
@@ -225,10 +203,6 @@ const Resumes = () => {
                     if (jobsData.value.length > 0) {
                         setSelectedJobId(jobsData.value[0].id);
                     }
-                }
-
-                if (interviewsData.status === "fulfilled" && Array.isArray(interviewsData.value)) {
-                    setInterviews(interviewsData.value);
                 }
 
                 if (resumesData.status === "fulfilled" && Array.isArray(resumesData.value)) {
@@ -284,7 +258,7 @@ const Resumes = () => {
     const tabCounts = useMemo(() => {
         const total = safeCandidates.length;
         const shortlisted = safeCandidates.filter((c) => c && c.status === "Shortlisted").length;
-        const review = safeCandidates.filter((c) => c && c.status === "Review").length;
+        const review = safeCandidates.filter((c) => c && (c.status === "Review" || c.status === "Under Review")).length;
         const rejected = safeCandidates.filter((c) => c && c.status === "Rejected").length;
         return { total, shortlisted, review, rejected };
     }, [safeCandidates]);
@@ -324,7 +298,7 @@ const Resumes = () => {
                 if (!c) return false;
                 // Tab filter: separates resumes by Shortlisted vs Review vs Rejected
                 if (activeTab === "Shortlisted" && c.status !== "Shortlisted") return false;
-                if (activeTab === "Review" && c.status !== "Review") return false;
+                if (activeTab === "Review" && c.status !== "Review" && c.status !== "Under Review") return false;
                 if (activeTab === "Rejected" && c.status !== "Rejected") return false;
 
                 const candidateDomain = detectCandidateDomain(c);
@@ -372,6 +346,23 @@ const Resumes = () => {
                 return 0;
             });
     }, [candidates, activeTab, selectedField, selectedFolderJobId, jobs, searchQuery, sortBy, filterRole, filterMinScore]);
+
+    const totalPages = Math.max(1, Math.ceil(filteredCandidates.length / pageSize));
+
+    const paginatedCandidates = useMemo(() => {
+        const startIndex = (currentPage - 1) * pageSize;
+        return filteredCandidates.slice(startIndex, startIndex + pageSize);
+    }, [filteredCandidates, currentPage, pageSize]);
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [activeTab, selectedField, selectedFolderJobId, searchQuery, sortBy, filterRole, filterMinScore, pageSize]);
+
+    useEffect(() => {
+        if (currentPage > totalPages && totalPages > 0) {
+            setCurrentPage(totalPages);
+        }
+    }, [currentPage, totalPages]);
 
     // Batch Screen all candidates against current target JD
     const handleScreenAllAgainstJd = async () => {
@@ -569,6 +560,8 @@ const Resumes = () => {
         setOpenActionMenuId(null);
         try {
             await resumesApi.updateStatus(id, newStatus);
+            window.dispatchEvent(new CustomEvent("avahire_resumes_updated"));
+            window.dispatchEvent(new CustomEvent("avahire_candidates_updated"));
         } catch (err) {
             console.error("Failed to sync resume status to database:", err);
         }
@@ -607,7 +600,7 @@ const Resumes = () => {
         if (status === "Shortlisted") {
             return "bg-emerald-50 text-emerald-700 border border-emerald-200/90";
         }
-        if (status === "Review") {
+        if (status === "Review" || status === "Under Review") {
             return "bg-amber-50 text-amber-700 border border-amber-200/90";
         }
         return "bg-rose-50 text-rose-600 border border-rose-200/90";
@@ -949,7 +942,7 @@ const Resumes = () => {
                                     </td>
                                 </tr>
                             ) : (
-                                filteredCandidates.map((candidate, idx) => {
+                                paginatedCandidates.map((candidate, idx) => {
                                     const isSelectedRow = selectedCandidateId === candidate.id;
                                     const isChecked = selectedRowIds.includes(candidate.id);
                                     const isAnalyzing = analyzingCandidateId === candidate.id;
@@ -1097,13 +1090,41 @@ const Resumes = () => {
 
                                             {/* Status */}
                                             <td className="py-3.5 px-3 whitespace-nowrap">
-                                                <span
-                                                    className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-semibold ${getStatusPill(
-                                                        candidate.status
-                                                    )}`}
-                                                >
-                                                    {candidate.status}
-                                                </span>
+                                                <div className="flex flex-col gap-1.5 items-start">
+                                                    <span
+                                                        className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-semibold ${getStatusPill(
+                                                            candidate.status
+                                                        )}`}
+                                                    >
+                                                        {(candidate.status === "Review" || candidate.status === "Under Review") ? "Under Review" : candidate.status}
+                                                    </span>
+                                                    {(candidate.status === "Review" || candidate.status === "Under Review") && (
+                                                        <div className="flex items-center gap-1">
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleStatusChange(candidate.id, "Shortlisted");
+                                                                }}
+                                                                className="px-2 py-0.5 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-[10px] font-bold flex items-center gap-1 transition cursor-pointer"
+                                                                title="Shortlist resume"
+                                                            >
+                                                                <UserCheck className="w-3 h-3 text-emerald-600" />
+                                                                <span>Shortlist</span>
+                                                            </button>
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleStatusChange(candidate.id, "Rejected");
+                                                                }}
+                                                                className="px-2 py-0.5 rounded-md bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[10px] font-bold flex items-center gap-1 transition cursor-pointer"
+                                                                title="Reject resume"
+                                                            >
+                                                                <UserX className="w-3 h-3 text-rose-600" />
+                                                                <span>Reject</span>
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </td>
 
                                             {/* Actions */}
@@ -1178,17 +1199,28 @@ const Resumes = () => {
                                                         </button>
                                                         <div className="border-t border-slate-100 my-1" />
 
-                                                        <button
-                                                            onClick={() => {
-                                                                setSelectedCandidateId(candidate.id);
-                                                                setShowInterviewModal(true);
-                                                                setOpenActionMenuId(null);
-                                                            }}
-                                                            className="w-full px-3.5 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700 cursor-pointer"
-                                                        >
-                                                            <Calendar className="w-3.5 h-3.5 text-slate-500" />
-                                                            <span>Schedule Interview</span>
-                                                        </button>
+                                                        {(candidate.status === "Review" || candidate.status === "Under Review") && (
+                                                            <>
+                                                                <button
+                                                                    onClick={() => {
+                                                                        handleStatusChange(candidate.id, "Shortlisted");
+                                                                    }}
+                                                                    className="w-full px-3.5 py-2 hover:bg-emerald-50 flex items-center gap-2 text-emerald-700 font-semibold cursor-pointer"
+                                                                >
+                                                                    <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
+                                                                    <span>Shortlist Resume</span>
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => {
+                                                                        handleStatusChange(candidate.id, "Rejected");
+                                                                    }}
+                                                                    className="w-full px-3.5 py-2 hover:bg-rose-50 flex items-center gap-2 text-rose-700 font-semibold cursor-pointer"
+                                                                >
+                                                                    <UserX className="w-3.5 h-3.5 text-rose-600" />
+                                                                    <span>Reject Resume</span>
+                                                                </button>
+                                                            </>
+                                                        )}
                                                         <button
                                                             onClick={() => {
                                                                 toast.success(`Downloading ${candidate.name}'s resume...`);
@@ -1213,13 +1245,48 @@ const Resumes = () => {
                 {/* Pagination Footer */}
                 <div className="p-4 border-t border-slate-100 flex items-center justify-end gap-3 text-xs text-slate-500 bg-slate-50/40">
                     <div className="flex items-center gap-1.5">
-                        <button className="w-7 h-7 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-white text-slate-600 disabled:opacity-40">
+                        <button
+                            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                            disabled={currentPage <= 1}
+                            className="w-7 h-7 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-white text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+                            title="Previous Page"
+                        >
                             <ChevronLeft className="w-3.5 h-3.5" />
                         </button>
-                        <button className="w-7 h-7 rounded-lg bg-violet-600 text-white font-bold flex items-center justify-center shadow-xs">
-                            1
-                        </button>
-                        <button className="w-7 h-7 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-white text-slate-600">
+
+                        {Array.from({ length: totalPages }, (_, i) => i + 1)
+                            .filter((p) => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1)
+                            .reduce((acc, p, idx, arr) => {
+                                if (idx > 0 && p - arr[idx - 1] > 1) {
+                                    acc.push("...");
+                                }
+                                acc.push(p);
+                                return acc;
+                            }, [])
+                            .map((p, idx) =>
+                                p === "..." ? (
+                                    <span key={`dots-${idx}`} className="px-1 text-slate-400">...</span>
+                                ) : (
+                                    <button
+                                        key={p}
+                                        onClick={() => setCurrentPage(p)}
+                                        className={`w-7 h-7 rounded-lg font-bold flex items-center justify-center transition cursor-pointer ${
+                                            currentPage === p
+                                                ? "bg-violet-600 text-white shadow-xs"
+                                                : "border border-slate-200 hover:bg-white text-slate-600"
+                                        }`}
+                                    >
+                                        {p}
+                                    </button>
+                                )
+                            )}
+
+                        <button
+                            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                            disabled={currentPage >= totalPages}
+                            className="w-7 h-7 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-white text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+                            title="Next Page"
+                        >
                             <ChevronRight className="w-3.5 h-3.5" />
                         </button>
                     </div>
@@ -1671,7 +1738,7 @@ const Resumes = () => {
                         <div className="flex justify-between items-center gap-3 pt-3 border-t border-slate-100">
                             <button
                                 onClick={() => setShowFullProfileModal(false)}
-                                className="px-5 py-2.5 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                                className="px-5 py-2.5 border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
                             >
                                 Close
                             </button>
@@ -1687,17 +1754,30 @@ const Resumes = () => {
                                     <Sparkles className="w-4 h-4 text-violet-600" />
                                     <span>Re-screen with AI ATS</span>
                                 </button>
-                                <button
-                                    onClick={() => {
-                                        setShowFullProfileModal(false);
-                                        setGeneratedLinkData(null);
-                                        setShowInterviewModal(true);
-                                    }}
-                                    className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-semibold shadow-md shadow-violet-500/20 flex items-center gap-1.5 cursor-pointer"
-                                >
-                                    <Calendar className="w-4 h-4 text-white" />
-                                    <span>Schedule AI Interview</span>
-                                </button>
+                                {(selectedCandidate.status === "Review" || selectedCandidate.status === "Under Review") && (
+                                    <>
+                                        <button
+                                            onClick={() => {
+                                                handleStatusChange(selectedCandidate.id, "Shortlisted");
+                                                setShowFullProfileModal(false);
+                                            }}
+                                            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                                        >
+                                            <UserCheck className="w-4 h-4 text-white" />
+                                            <span>Shortlist Resume</span>
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                handleStatusChange(selectedCandidate.id, "Rejected");
+                                                setShowFullProfileModal(false);
+                                            }}
+                                            className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-sm font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                                        >
+                                            <UserX className="w-4 h-4 text-rose-600" />
+                                            <span>Reject Resume</span>
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -1812,211 +1892,7 @@ const Resumes = () => {
                 </div>
             )}
 
-            {/* Modal: Schedule Interview */}
-            {showInterviewModal && selectedCandidate && (
-                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in">
-                    <div className="bg-white w-full max-w-md rounded-3xl p-6 sm:p-7 shadow-2xl border border-slate-100 space-y-5 animate-in zoom-in-95">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2.5">
-                                <div className="w-10 h-10 rounded-xl bg-violet-100 text-violet-700 flex items-center justify-center">
-                                    <Calendar className="w-5 h-5" />
-                                </div>
-                                <div>
-                                    <h3 className="font-bold text-slate-900 text-base">Schedule Candidate Interview</h3>
-                                    <p className="text-xs text-slate-500">
-                                        {selectedCandidate.name} • {selectedCandidate.role}
-                                    </p>
-                                </div>
-                            </div>
-                            <button
-                                onClick={() => {
-                                    setShowInterviewModal(false);
-                                    setGeneratedLinkData(null);
-                                }}
-                                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg"
-                            >
-                                <X className="w-4 h-4" />
-                            </button>
-                        </div>
-
-                        {!generatedLinkData ? (
-                            <div className="space-y-3.5 text-xs">
-                                <div>
-                                    <label className="font-semibold text-slate-700 block mb-1">Interview Round</label>
-                                    <select
-                                        value={schedRound}
-                                        onChange={(e) => setSchedRound(e.target.value)}
-                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-violet-500 font-medium"
-                                    >
-                                        <option>Technical Screening Round (45 mins)</option>
-                                        <option>AI Live Video Assessment (30 mins)</option>
-                                        <option>Full-Stack &amp; Coding Round (60 mins)</option>
-                                        <option>HR &amp; Cultural Fit Interview (30 mins)</option>
-                                    </select>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                        <label className="font-semibold text-slate-700 block mb-1">Date</label>
-                                        <input
-                                            type="date"
-                                            value={schedDate}
-                                            onChange={(e) => setSchedDate(e.target.value)}
-                                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-violet-500 font-medium text-slate-800"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="font-semibold text-slate-700 block mb-1">Time</label>
-                                        <input
-                                            type="time"
-                                            value={schedTime}
-                                            onChange={(e) => setSchedTime(e.target.value)}
-                                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-violet-500 font-medium text-slate-800"
-                                        />
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <label className="font-semibold text-slate-700 block mb-1">Estimated Duration</label>
-                                    <select
-                                        value={schedDuration}
-                                        onChange={(e) => setSchedDuration(e.target.value)}
-                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-violet-500 font-medium"
-                                    >
-                                        <option>45 Minutes</option>
-                                        <option>30 Minutes</option>
-                                        <option>60 Minutes</option>
-                                        <option>15 Minutes</option>
-                                    </select>
-                                </div>
-
-                                <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-1.5 text-xs text-slate-600">
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">Candidate Email:</span>
-                                        <span className="font-semibold text-slate-800">{selectedCandidate.email}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">Phone (as per Resume):</span>
-                                        <span className="font-semibold font-mono text-violet-700">{selectedCandidate.phone || "No phone extracted"}</span>
-                                    </div>
-                                </div>
-
-                                <div className="p-3 bg-violet-50/70 border border-violet-100 rounded-2xl flex items-center gap-2.5 text-slate-700 font-medium">
-                                    <ShieldCheck className="w-4 h-4 text-violet-600 shrink-0" />
-                                    <span>
-                                        AI will prepare personalized questions based on <strong>{selectedCandidate.name}'s resume</strong> and <strong>{currentJd.title}</strong> requirements. Candidate must authenticate using this exact email and phone.
-                                    </span>
-                                </div>
-
-                                <div className="flex justify-end gap-2.5 pt-2 border-t border-slate-100">
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowInterviewModal(false)}
-                                        className="px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50"
-                                    >
-                                        Cancel
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            const code = `ava-${selectedCandidate.id}`;
-                                            const dateObj = new Date(schedDate);
-                                            const formattedDate = !isNaN(dateObj)
-                                                ? dateObj.toLocaleDateString("en-GB", {
-                                                      day: "2-digit",
-                                                      month: "long",
-                                                      year: "numeric"
-                                                  })
-                                                : "02 September 2026";
-                                            const dayName = !isNaN(dateObj)
-                                                ? dateObj.toLocaleDateString("en-US", { weekday: "long" })
-                                                : "Tuesday";
-
-                                            const newIv = {
-                                                id: `iv-${selectedCandidate.id}`,
-                                                candidateId: selectedCandidate.id,
-                                                resumeId: selectedCandidate.id,
-                                                name: selectedCandidate.name,
-                                                email: selectedCandidate.email,
-                                                phone: selectedCandidate.phone || "",
-                                                avatar: selectedCandidate.avatar,
-                                                role: currentJd.title || selectedCandidate.role,
-                                                company: "AvaHire Technologies Pvt. Ltd.",
-                                                date: formattedDate,
-                                                dayOfWeek: dayName,
-                                                time: schedTime ? (schedTime.includes(":") ? schedTime : `${schedTime} AM`) : "11:00 AM",
-                                                timeZone: "IST",
-                                                duration: schedDuration,
-                                                linkCode: code,
-                                                status: "Scheduled",
-                                                expiry: "05:00 Remaining",
-                                                expiryTime: `${formattedDate}, ${schedTime}`,
-                                                isExpired: false
-                                            };
-
-                                            addOrUpdateInterview(newIv);
-                                            interviewsApi.create(newIv).then((created) => {
-                                                setInterviews(prev => [created || newIv, ...prev.filter(x => x.id !== newIv.id)]);
-                                            }).catch((err) => console.warn("Failed to persist interview to DB:", err));
-                                            setGeneratedLinkData(newIv);
-                                            handleStatusChange(selectedCandidate.id, "Shortlisted");
-                                            toast.success(`Interview invitation scheduled for ${selectedCandidate.name}!`);
-                                        }}
-                                        className="px-5 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-semibold shadow-md shadow-violet-500/25 active:scale-[0.98] transition"
-                                    >
-                                        Generate &amp; Schedule
-                                    </button>
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="space-y-4 text-xs animate-in zoom-in-95">
-                                <div className="p-3 bg-emerald-50 border border-emerald-200/80 rounded-2xl flex items-center gap-2.5 text-emerald-800 font-medium">
-                                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                                    <span>Interview scheduled &amp; linked to candidate successfully!</span>
-                                </div>
-
-                                <div className="space-y-2 p-3.5 bg-slate-50/70 rounded-2xl border border-slate-100 text-xs text-slate-600">
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">Candidate:</span>
-                                        <span className="font-semibold text-slate-800">{generatedLinkData.name} ({generatedLinkData.email})</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">Contact Number:</span>
-                                        <span className="font-semibold font-mono text-violet-700">{generatedLinkData.phone || "No phone"}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">Scheduled For:</span>
-                                        <span className="font-semibold text-slate-800">
-                                            {generatedLinkData.date} at {generatedLinkData.time}
-                                        </span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-400">Target Role:</span>
-                                        <span className="font-semibold text-slate-800">{generatedLinkData.role}</span>
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
-                                    <Link
-                                        to={`/app/email?candidateEmail=${encodeURIComponent(selectedCandidate?.email || "")}&interviewCode=${generatedLinkData.linkCode}&role=${encodeURIComponent(generatedLinkData.role || "")}`}
-                                        className="py-2.5 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center gap-1.5 transition text-center"
-                                    >
-                                        <Mail className="w-3.5 h-3.5" />
-                                        <span>Send via Email</span>
-                                    </Link>
-                                    <Link
-                                        to="/app/interviews"
-                                        className="py-2.5 px-3 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition text-center shadow-xs"
-                                    >
-                                        <Calendar className="w-3.5 h-3.5" />
-                                        <span>View in Interviews</span>
-                                    </Link>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
+            {/* Interview scheduling modal removed from resume page */}
 
             {/* Modal: Filters Popover */}
             {showFilterModal && (

@@ -77,6 +77,7 @@ const Candidates = () => {
             return 10;
         }
     });
+    const [currentPage, setCurrentPage] = useState(1);
     const [showFilterModal, setShowFilterModal] = useState(false);
 
     // Expanded candidate accordion / downward drawer state
@@ -412,6 +413,23 @@ const Candidates = () => {
             });
     }, [candidates, jobs, resumes, sortBy, statusFilter, jobFilter, searchQuery]);
 
+    const totalPages = Math.max(1, Math.ceil(filteredCandidates.length / pageSize));
+
+    const paginatedCandidates = useMemo(() => {
+        const startIndex = (currentPage - 1) * pageSize;
+        return filteredCandidates.slice(startIndex, startIndex + pageSize);
+    }, [filteredCandidates, currentPage, pageSize]);
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [statusFilter, jobFilter, searchQuery, sortBy, pageSize]);
+
+    useEffect(() => {
+        if (currentPage > totalPages && totalPages > 0) {
+            setCurrentPage(totalPages);
+        }
+    }, [currentPage, totalPages]);
+
     const toggleExpandCandidate = (id) => {
         setExpandedCandidateId((prev) => (prev === id ? null : id));
     };
@@ -669,7 +687,7 @@ const Candidates = () => {
                         </div>
                     </div>
                 ) : (
-                    filteredCandidates.map((candidate, idx) => {
+                    paginatedCandidates.map((candidate, idx) => {
                         const isExpanded = expandedCandidateId === candidate.id;
                         const candidateInterview = getCandidateInterview(candidate);
 
@@ -1340,29 +1358,48 @@ const Candidates = () => {
             {/* Pagination Footer */}
             <div className="flex flex-wrap items-center justify-center sm:justify-between gap-4 pt-4 pb-2 text-xs text-slate-500">
                 <div className="flex items-center gap-1.5 mx-auto sm:mx-0">
-                    <button className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-white text-slate-600 transition">
+                    <button
+                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                        disabled={currentPage <= 1}
+                        className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-white text-slate-600 transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                        title="Previous Page"
+                    >
                         <ChevronLeft className="w-4 h-4" />
                     </button>
-                    <button className="w-8 h-8 rounded-xl bg-violet-50 text-violet-700 border border-violet-200 font-bold flex items-center justify-center shadow-xs">
-                        1
-                    </button>
-                    <button className="w-8 h-8 rounded-xl hover:bg-white text-slate-600 flex items-center justify-center transition">
-                        2
-                    </button>
-                    <button className="w-8 h-8 rounded-xl hover:bg-white text-slate-600 flex items-center justify-center transition">
-                        3
-                    </button>
-                    <button className="w-8 h-8 rounded-xl hover:bg-white text-slate-600 flex items-center justify-center transition">
-                        4
-                    </button>
-                    <button className="w-8 h-8 rounded-xl hover:bg-white text-slate-600 flex items-center justify-center transition">
-                        5
-                    </button>
-                    <span className="px-1 text-slate-400">...</span>
-                    <button className="w-8 h-8 rounded-xl hover:bg-white text-slate-600 flex items-center justify-center transition">
-                        5
-                    </button>
-                    <button className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-white text-slate-600 transition">
+
+                    {Array.from({ length: totalPages }, (_, i) => i + 1)
+                        .filter((p) => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1)
+                        .reduce((acc, p, idx, arr) => {
+                            if (idx > 0 && p - arr[idx - 1] > 1) {
+                                acc.push("...");
+                            }
+                            acc.push(p);
+                            return acc;
+                        }, [])
+                        .map((p, idx) =>
+                            p === "..." ? (
+                                <span key={`dots-${idx}`} className="px-1 text-slate-400">...</span>
+                            ) : (
+                                <button
+                                    key={p}
+                                    onClick={() => setCurrentPage(p)}
+                                    className={`w-8 h-8 rounded-xl font-bold flex items-center justify-center transition cursor-pointer ${
+                                        currentPage === p
+                                            ? "bg-violet-50 text-violet-700 border border-violet-200 shadow-xs"
+                                            : "hover:bg-white text-slate-600 border border-transparent"
+                                    }`}
+                                >
+                                    {p}
+                                </button>
+                            )
+                        )}
+
+                    <button
+                        onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                        disabled={currentPage >= totalPages}
+                        className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-white text-slate-600 transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                        title="Next Page"
+                    >
                         <ChevronRight className="w-4 h-4" />
                     </button>
                 </div>

@@ -26,5 +26,9 @@
   },
   "include": [
     "src"
+  ],
+  "exclude": [
+    "node_modules",
+    "src/pages/candidate/liveavatar"
   ]
 }

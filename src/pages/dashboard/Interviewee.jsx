@@ -33,6 +33,7 @@ const Interviewee = () => {
 
     // Pagination
     const [pageSize, setPageSize] = useState(10);
+    const [currentPage, setCurrentPage] = useState(1);
 
     // Copy Feedback State
     const [copiedId, setCopiedId] = useState(null);
@@ -101,9 +102,11 @@ const Interviewee = () => {
         };
         window.addEventListener("avahire_interviews_updated", handleSync);
         window.addEventListener("avahire_candidates_updated", handleSync);
+        window.addEventListener("avahire_resumes_updated", handleSync);
         return () => {
             window.removeEventListener("avahire_interviews_updated", handleSync);
             window.removeEventListener("avahire_candidates_updated", handleSync);
+            window.removeEventListener("avahire_resumes_updated", handleSync);
         };
     }, []);
 
@@ -121,66 +124,81 @@ const Interviewee = () => {
     const allShortlistedList = useMemo(() => {
         const map = new Map();
 
-        // 1. From Candidates API: status is Shortlisted or has score >= 60
-        candidates.forEach((c) => {
-            const isShortlisted =
-                c.status === "Shortlisted" ||
-                c.stage === "Shortlisted" ||
-                c.status === "Interview Scheduled" ||
-                c.status === "Screened" ||
-                (typeof c.score === "number" && c.score >= 60);
-
-            if (isShortlisted || candidates.length <= 10) {
-                const key = (c.email || c.id || "").toLowerCase().trim();
-                map.set(key, {
-                    id: c.id || `cand-${Date.now()}`,
-                    name: c.name || "Candidate",
-                    email: c.email || "",
-                    phone: c.phone || "",
-                    role: c.role || c.jobTitle || "Software Engineer",
-                    department: c.department || "Engineering",
-                    score: typeof c.score === "number" ? c.score : 88,
-                    skills: Array.isArray(c.skills) ? c.skills : (c.skills ? String(c.skills).split(",") : ["React", "TypeScript", "Node.js"]),
-                    experience: c.experience || "3+ years",
-                    location: c.location || "Remote / India",
-                    status: c.status || "Shortlisted",
-                    appliedDate: c.appliedDate || c.date || "Recent",
-                    avatar: c.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(c.name || "Cand")}`,
-                    source: "Candidate Pipeline"
-                });
-            }
-        });
-
-        // 2. From Resumes API: status is shortlisted or high match score
+        // 1. Process Resumes FIRST to prioritize all Shortlisted Resumes from Resume screening
         resumes.forEach((r) => {
+            const statusStr = (r.status || "").toLowerCase().trim();
             const isShortlisted =
-                r.status === "Shortlisted" ||
-                r.status === "Interview Scheduled" ||
-                r.matchScore >= 60 ||
-                r.score >= 60;
+                statusStr === "shortlisted" ||
+                statusStr === "interview scheduled" ||
+                r.isShortlisted === true ||
+                (typeof r.matchScore === "number" && r.matchScore >= 80) ||
+                (typeof r.score === "number" && r.score >= 80);
 
-            const key = (r.email || r.id || "").toLowerCase().trim();
-            if (key && !map.has(key) && isShortlisted) {
+            if (isShortlisted) {
+                const key = r.id || (r.email ? `res-${r.email.toLowerCase().trim()}` : `res-${Math.random()}`);
+                const skillsArr = Array.isArray(r.skills)
+                    ? r.skills
+                    : (r.allSkills || r.matchedSkills || ["Full Stack", "Problem Solving"]);
+
                 map.set(key, {
                     id: r.id || `res-${Date.now()}`,
                     name: r.name || r.candidateName || "Candidate",
                     email: r.email || "",
                     phone: r.phone || "",
-                    role: r.role || r.targetRole || "Software Developer",
-                    department: "Engineering",
-                    score: r.matchScore || r.score || 85,
-                    skills: Array.isArray(r.skills) ? r.skills : ["Full Stack", "Problem Solving"],
-                    experience: r.experience || "2+ years",
+                    role: r.role || r.targetRole || r.targetJobTitle || "Software Developer",
+                    department: r.department || "Engineering",
+                    score: r.matchScore || r.atsScore || r.score || 85,
+                    skills: skillsArr,
+                    experience: r.experience || (r.expYears !== undefined ? `${r.expYears} Years` : "2+ years"),
                     location: r.location || "India",
-                    status: r.status || "Shortlisted",
-                    appliedDate: r.uploadedAt || "Recent",
+                    status: "Shortlisted",
+                    appliedDate: r.uploadedAt || r.uploadedDate || "Recent",
                     avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(r.name || "Res")}`,
-                    source: "Resume Screening"
+                    source: "Resume Screening",
+                    isResumeShortlisted: true
                 });
             }
         });
 
-        // Fallback demo candidates if database is currently empty
+        // 2. From Candidates API: include candidates only if genuinely Shortlisted and not already present
+        candidates.forEach((c) => {
+            const statusStr = (c.status || "").toLowerCase().trim();
+            const stageStr = (c.stage || "").toLowerCase().trim();
+            const isShortlisted =
+                statusStr === "shortlisted" ||
+                stageStr === "shortlisted" ||
+                statusStr === "interview scheduled" ||
+                statusStr === "screened";
+
+            if (isShortlisted) {
+                const alreadyExists = Array.from(map.values()).some(
+                    (existing) =>
+                        existing.id === c.id ||
+                        (existing.email && c.email && existing.email.toLowerCase().trim() === c.email.toLowerCase().trim())
+                );
+                if (!alreadyExists) {
+                    const key = c.id || (c.email ? `cand-${c.email.toLowerCase().trim()}` : `cand-${Math.random()}`);
+                    map.set(key, {
+                        id: c.id || `cand-${Date.now()}`,
+                        name: c.name || "Candidate",
+                        email: c.email || "",
+                        phone: c.phone || "",
+                        role: c.role || c.jobTitle || "Software Engineer",
+                        department: c.department || "Engineering",
+                        score: typeof c.score === "number" ? c.score : 88,
+                        skills: Array.isArray(c.skills) ? c.skills : (c.skills ? String(c.skills).split(",") : ["React", "TypeScript", "Node.js"]),
+                        experience: c.experience || "3+ years",
+                        location: c.location || "Remote / India",
+                        status: c.status || "Shortlisted",
+                        appliedDate: c.appliedDate || c.date || "Recent",
+                        avatar: c.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(c.name || "Cand")}`,
+                        source: "Candidate Pipeline"
+                    });
+                }
+            }
+        });
+
+        // Fallback demo candidates ONLY if database has completely 0 candidates and resumes
         if (map.size === 0) {
             const defaults = [
                 {
@@ -232,18 +250,24 @@ const Interviewee = () => {
                     source: "AI Resume Match"
                 }
             ];
-            defaults.forEach((d) => map.set(d.email.toLowerCase(), d));
+            defaults.forEach((d) => map.set(d.id, d));
         }
 
         return Array.from(map.values());
     }, [candidates, resumes]);
 
-    // Filter to ONLY candidates whose link has NOT yet been generated (scheduled/transferred ones go to AI Video Interviews)
+    // Filter to candidates who should be shown in Shortlisted Interviewees.
+    // All shortlisted resumes from the resume screening are always visible!
     const shortlistedCandidatesOnly = useMemo(() => {
         return allShortlistedList
             .map((cand) => {
                 const iv = getCandidateInterview(cand);
-                const hasGeneratedLink = !!iv && !!iv.linkCode;
+                const hasGeneratedLink =
+                    !!iv &&
+                    !!iv.linkCode &&
+                    (iv.status === "Scheduled" || iv.status === "Active") &&
+                    !iv.isExpired;
+
                 return {
                     ...cand,
                     interviewSession: iv || null,
@@ -254,9 +278,32 @@ const Interviewee = () => {
                     interviewTime: iv ? iv.time : null
                 };
             })
-            .filter((cand) => !cand.hasGeneratedLink)
+            .filter((cand) => {
+                // All shortlisted resumes from the resume page must be visible!
+                if (cand.isResumeShortlisted || cand.source === "Resume Screening") {
+                    return true;
+                }
+                return !cand.hasGeneratedLink;
+            })
             .sort((a, b) => (b.score || 0) - (a.score || 0));
     }, [allShortlistedList, interviews]);
+
+    const totalPages = Math.max(1, Math.ceil(shortlistedCandidatesOnly.length / pageSize));
+
+    const paginatedCandidates = useMemo(() => {
+        const startIndex = (currentPage - 1) * pageSize;
+        return shortlistedCandidatesOnly.slice(startIndex, startIndex + pageSize);
+    }, [shortlistedCandidatesOnly, currentPage, pageSize]);
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [pageSize]);
+
+    useEffect(() => {
+        if (currentPage > totalPages && totalPages > 0) {
+            setCurrentPage(totalPages);
+        }
+    }, [currentPage, totalPages]);
 
     // Open Schedule Modal for a candidate
     const handleOpenScheduleModal = (cand) => {
@@ -376,13 +423,7 @@ const Interviewee = () => {
                         <div>
                             <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
                                 <span>Shortlisted Interviewees</span>
-                                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-violet-100 text-violet-700 border border-violet-200">
-                                    {shortlistedCandidatesOnly.length} Candidates Ready to Schedule
-                                </span>
                             </h1>
-                            <p className="text-xs sm:text-sm text-slate-500">
-                                Generate candidate portal links to schedule AI Video Interviews. Once scheduled, candidates transfer to the AI Video Interviews page.
-                            </p>
                         </div>
                     </div>
                 </div>
@@ -444,7 +485,7 @@ const Interviewee = () => {
                                     </td>
                                 </tr>
                             ) : (
-                                shortlistedCandidatesOnly.map((cand) => {
+                                paginatedCandidates.map((cand) => {
                                     return (
                                         <tr
                                             key={cand.id}
@@ -536,19 +577,51 @@ const Interviewee = () => {
                 </div>
 
                 {/* Footer Controls */}
-                <div className="p-4 sm:px-6 border-t border-slate-100 flex flex-wrap items-center justify-between gap-4 text-xs text-slate-500">
-                    <div>
-                        Showing {shortlistedCandidatesOnly.length} shortlisted candidates waiting for link generation
-                    </div>
+                <div className="p-4 sm:px-6 border-t border-slate-100 flex flex-wrap items-center justify-end gap-4 text-xs text-slate-500">
 
                     <div className="flex items-center gap-1.5">
-                        <button disabled className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center text-slate-300 disabled:opacity-50">
+                        <button
+                            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                            disabled={currentPage <= 1}
+                            className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+                            title="Previous Page"
+                        >
                             <ChevronLeft className="w-4 h-4" />
                         </button>
-                        <button className="w-8 h-8 rounded-xl bg-violet-600 text-white font-bold flex items-center justify-center shadow-xs">
-                            1
-                        </button>
-                        <button disabled className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center text-slate-300 disabled:opacity-50">
+
+                        {Array.from({ length: totalPages }, (_, i) => i + 1)
+                            .filter((p) => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1)
+                            .reduce((acc, p, idx, arr) => {
+                                if (idx > 0 && p - arr[idx - 1] > 1) {
+                                    acc.push("...");
+                                }
+                                acc.push(p);
+                                return acc;
+                            }, [])
+                            .map((p, idx) =>
+                                p === "..." ? (
+                                    <span key={`dots-${idx}`} className="px-1 text-slate-400">...</span>
+                                ) : (
+                                    <button
+                                        key={p}
+                                        onClick={() => setCurrentPage(p)}
+                                        className={`w-8 h-8 rounded-xl font-bold flex items-center justify-center transition cursor-pointer ${
+                                            currentPage === p
+                                                ? "bg-violet-600 text-white shadow-xs"
+                                                : "border border-slate-200 hover:bg-white text-slate-600"
+                                        }`}
+                                    >
+                                        {p}
+                                    </button>
+                                )
+                            )}
+
+                        <button
+                            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                            disabled={currentPage >= totalPages}
+                            className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+                            title="Next Page"
+                        >
                             <ChevronRight className="w-4 h-4" />
                         </button>
                     </div>
