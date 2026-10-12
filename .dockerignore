@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.gitignore
+.env.local
+.env.*.local
+*.log
+npm-debug.log*
+.vscode
+server/data/s3_storage_mirror
+server/data/uploads
+server/data/temp
