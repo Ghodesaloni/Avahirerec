@@ -79,6 +79,10 @@
     "vaul": "1.1.2",
     "zod": "3.24.4"
   },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
   "scripts": {
     "dev": "cross-env PORT=3000 HOST=0.0.0.0 WDS_SOCKET_PORT= DANGEROUSLY_DISABLE_HOST_CHECK=true DISABLE_ESLINT_PLUGIN=true craco start",
     "start": "node server/server.js",
