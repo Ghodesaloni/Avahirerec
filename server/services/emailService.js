@@ -2,7 +2,15 @@ const fs = require("fs");
 const path = require("path");
 require("dotenv").config({ override: true });
 const nodemailer = require("nodemailer");
-const { SESClient, SendEmailCommand } = require("@aws-sdk/client-ses");
+let SESClient = null;
+let SendEmailCommand = null;
+try {
+  const sesModule = require("@aws-sdk/client-ses");
+  SESClient = sesModule.SESClient;
+  SendEmailCommand = sesModule.SendEmailCommand;
+} catch (sesImportErr) {
+  // SES client optional - SMTP is the primary engine
+}
 const emailCenterDb = require("../db/emailCenterDb");
 
 function getStoredAwsConfig() {
@@ -21,6 +29,7 @@ function storeDispatchedEmail(_data) {
 }
 
 function getAwsSesClient() {
+  if (!SESClient) return null;
   const awsCfg = getStoredAwsConfig();
   const accessKeyId = (process.env.AWS_ACCESS_KEY_ID || awsCfg.accessKeyId || "").trim();
   const secretAccessKey = (process.env.AWS_SECRET_ACCESS_KEY || awsCfg.secretAccessKey || "").trim();
@@ -57,20 +66,18 @@ function getSesSenderAddress(customName = "AvaHire AI") {
 
 function getFormattedFrom(customName) {
   const awsCfg = getStoredAwsConfig();
-  // Prioritize configured SMTP credentials over AWS SES
-  const user = (process.env.SMTP_USER || process.env.GMAIL_USER || process.env.EMAIL_USER || process.env.AWS_SES_FROM_EMAIL || awsCfg.sesSender || "").trim();
+  const displayName = customName || "AvaHire AI";
+  // The authenticated SMTP user must match the sender in SMTP/Gmail
+  const smtpUser = (process.env.SMTP_USER || process.env.GMAIL_USER || process.env.EMAIL_USER || "").trim();
+  if (smtpUser && smtpUser.includes("@")) {
+    return `"${displayName}" <${smtpUser}>`;
+  }
   const rawFrom = (process.env.SMTP_FROM || process.env.AWS_SES_FROM_EMAIL || awsCfg.sesSender || "").trim();
-
   if (rawFrom.includes("<") && rawFrom.includes(">")) {
     return rawFrom;
   }
   if (rawFrom.includes("@")) {
-    return `"${customName || "AvaHire AI"}" <${rawFrom}>`;
-  }
-  const displayName = customName || "AvaHire AI";
-  if (user) {
-    if (user.includes("<") && user.includes(">")) return user;
-    return `"${displayName}" <${user}>`;
+    return `"${displayName}" <${rawFrom}>`;
   }
   return `"${displayName}" <salonighode@gmail.com>`;
 }

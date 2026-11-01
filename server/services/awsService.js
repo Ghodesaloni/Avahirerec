@@ -1,5 +1,13 @@
 const { S3Client, PutObjectCommand, GetObjectCommand, HeadBucketCommand } = require("@aws-sdk/client-s3");
-const { SESClient, SendEmailCommand } = require("@aws-sdk/client-ses");
+let SESClient = null;
+let SendEmailCommand = null;
+try {
+  const sesModule = require("@aws-sdk/client-ses");
+  SESClient = sesModule.SESClient;
+  SendEmailCommand = sesModule.SendEmailCommand;
+} catch (e) {
+  // SES optional
+}
 const fs = require("fs");
 const path = require("path");
 

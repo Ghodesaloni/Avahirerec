@@ -109,13 +109,20 @@ router.post("/register", async (req, res) => {
     const baseUrl = process.env.APP_URL || `${protocol}://${host}`;
     const loginUrl = `${baseUrl}/login`;
 
-    // 4. Send "Successfully Registered" welcome email via background dispatch (non-blocking)
-    emailService.sendRegistrationSuccessEmail({
-      toEmail: trimmedEmail,
-      fullName: fullName.trim(),
-      loginUrl,
-      initialPassword: trimmedPassword,
-    }).catch(emErr => console.warn("[AUTH-REGISTER] Welcome email notice:", emErr.message));
+    // 4. Send "Successfully Registered" welcome email via SMTP
+    let emailDispatched = true;
+    try {
+      await emailService.sendRegistrationSuccessEmail({
+        toEmail: trimmedEmail,
+        fullName: fullName.trim(),
+        loginUrl,
+        initialPassword: trimmedPassword,
+      });
+      console.log(`[AUTH-REGISTER] Welcome email dispatched successfully to: ${trimmedEmail}`);
+    } catch (emErr) {
+      console.warn("[AUTH-REGISTER] Welcome email notice:", emErr.message);
+      emailDispatched = false;
+    }
 
     console.log(`[AUTH-REGISTER] New user registered and stored in SQL database: ${trimmedEmail}`);
 
@@ -125,7 +132,7 @@ router.post("/register", async (req, res) => {
       message: "Successfully registered! Your HR account is securely saved in the database.",
       email: trimmedEmail,
       token,
-      emailDispatched: true,
+      emailDispatched,
     });
   } catch (err) {
     console.error("Registration route error:", err);
@@ -218,17 +225,18 @@ router.post("/resend-verification", async (req, res) => {
     const host = req.get("x-forwarded-host") || req.get("host") || "localhost:3000";
     const protocol = req.get("x-forwarded-proto") || req.protocol || "https";
     const baseUrl = process.env.APP_URL || `${protocol}://${host}`;
-    const loginUrl = `${baseUrl}/login`;
+    const verificationLink = `${baseUrl}/api/auth/verify-email?token=${encodeURIComponent(verificationToken)}`;
 
-    const emailDispatch = await emailService.sendRegistrationSuccessEmail({
+    await emailService.sendVerificationEmail({
       toEmail: trimmedEmail,
       fullName: user ? (user.full_name || user.fullName) : "Valued Recruiter",
-      loginUrl,
+      verificationLink,
+      token: verificationToken,
     });
 
     return res.json({
       success: true,
-      message: `Registration confirmation email has been resent to ${trimmedEmail}.`,
+      message: `Account verification email with one-time verification link has been sent to ${trimmedEmail}.`,
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });

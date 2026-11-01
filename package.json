@@ -4,7 +4,7 @@
   "private": true,
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1131.0",
-    "@aws-sdk/client-ses": "^3.1131.0",
+    "@aws-sdk/client-ses": "^3.1161.0",
     "@google/genai": "^2.21.0",
     "@hookform/resolvers": "5.0.1",
     "@radix-ui/react-accordion": "1.2.8",
