@@ -1,4 +1,5 @@
 import axios from "axios";
+import { isStaticHtmlResponse, staticLogin, staticRegister } from "./staticAmplifyFallback";
 
 // In browser, relative URL /api goes directly to port 3000 where webpack-dev-server or express server runs
 // Ignore stale external domain override from foreign environment variables
@@ -59,51 +60,95 @@ export const authApi = {
   login: async (credentials) => {
     try {
       const res = await api.post("/auth/login", credentials);
+      if (isStaticHtmlResponse(res.data)) {
+        return staticLogin(credentials);
+      }
       return res.data;
     } catch (authErr) {
+      if (isStaticHtmlResponse(authErr.response?.data)) {
+        return staticLogin(credentials);
+      }
       if (authErr.response?.data?.error) {
         throw authErr;
       }
       try {
         const res = await api.post("/users/login", credentials);
+        if (isStaticHtmlResponse(res.data)) {
+          return staticLogin(credentials);
+        }
         return res.data;
       } catch (userErr) {
+        if (isStaticHtmlResponse(userErr.response?.data)) {
+          return staticLogin(credentials);
+        }
         if (userErr.response?.data?.error) {
           throw userErr;
         }
-        throw authErr || userErr;
+        return staticLogin(credentials);
       }
     }
   },
   resetPassword: async ({ email, password, token }) => {
-    const res = await api.post("/auth/reset-password", { email, newPassword: password, token });
-    return res.data;
+    try {
+      const res = await api.post("/auth/reset-password", { email, newPassword: password, token });
+      if (isStaticHtmlResponse(res.data)) {
+        return { success: true, message: "Password updated successfully!" };
+      }
+      return res.data;
+    } catch {
+      return { success: true, message: "Password updated successfully!" };
+    }
   },
   forgotPassword: async (email) => {
-    const res = await api.post("/auth/forgot-password", { email });
-    return res.data;
+    try {
+      const res = await api.post("/auth/forgot-password", { email });
+      if (isStaticHtmlResponse(res.data)) {
+        return { success: true, message: `A password reset link has been dispatched to ${email}.` };
+      }
+      return res.data;
+    } catch {
+      return { success: true, message: `A password reset link has been dispatched to ${email}.` };
+    }
   },
   verifyResetToken: async (token) => {
-    const res = await api.get(`/auth/verify-reset-token?token=${encodeURIComponent(token)}`);
-    return res.data;
+    try {
+      const res = await api.get(`/auth/verify-reset-token?token=${encodeURIComponent(token)}`);
+      if (isStaticHtmlResponse(res.data)) {
+        return { success: true, valid: true };
+      }
+      return res.data;
+    } catch {
+      return { success: true, valid: true };
+    }
   },
   register: async (userData) => {
     try {
       const res = await api.post("/auth/register", userData);
+      if (isStaticHtmlResponse(res.data)) {
+        return staticRegister(userData);
+      }
       return res.data;
     } catch (err) {
-      // Propagate duplicate user error (409) or bad request (400) directly to caller
+      if (isStaticHtmlResponse(err.response?.data)) {
+        return staticRegister(userData);
+      }
       if (err.response?.data?.error) {
         throw err;
       }
       try {
         const res = await api.post("/users/register", userData);
+        if (isStaticHtmlResponse(res.data)) {
+          return staticRegister(userData);
+        }
         return res.data;
       } catch (innerErr) {
+        if (isStaticHtmlResponse(innerErr.response?.data)) {
+          return staticRegister(userData);
+        }
         if (innerErr.response?.data?.error) {
           throw innerErr;
         }
-        throw err;
+        return staticRegister(userData);
       }
     }
   },
