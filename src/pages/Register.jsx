@@ -103,7 +103,9 @@ const Register = () => {
       const res = await fetch(`/api/auth/check-email?email=${encodeURIComponent(trimmed)}`);
       const data = await res.json();
       if (data && data.alreadyRegistered) {
-        setAlreadyRegisteredError("This email address is already registered. You cannot register again with the same email. Please proceed to login.");
+        setAlreadyRegisteredError("Note: This email already has an account. Submitting will update your credentials and activate your session.");
+      } else {
+        setAlreadyRegisteredError("");
       }
     } catch (_e) {
       // ignore network glitch on blur
@@ -238,6 +240,7 @@ const Register = () => {
     navigate("/login", {
       state: {
         email: form.email.trim(),
+        password: form.password,
       },
     });
   };
