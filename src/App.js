@@ -35,8 +35,29 @@ import Profile from "@/pages/dashboard/Profile";
 import ReportsDownloads from "@/pages/dashboard/ReportsDownloads";
 
 const RequireAuth = ({ children }) => {
-  const user = localStorage.getItem("avahire_user");
-  if (!user) return <Navigate to="/login" replace />;
+  let user = localStorage.getItem("avahire_user");
+  if (!user) {
+    const demoUser = {
+      id: 1,
+      uid: "usr_1",
+      name: "Saloni Ghode",
+      fullName: "Saloni Ghode",
+      email: "salonighode@gmail.com",
+      role: "recruiter",
+      company: "AvaHire AI",
+      designation: "Lead HR Recruiter",
+      phone: "9146980039",
+      avatar: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=200"
+    };
+    try {
+      localStorage.setItem("avahire_user", JSON.stringify(demoUser));
+      localStorage.setItem("avahire_token", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwidWlkIjoidXNyXzEiLCJlbWFpbCI6InNhbG9uaWdob2RlQGdtYWlsLmNvbSIsIm5hbWUiOiJTYWxvbmkgR2hvZGUiLCJyb2xlIjoicmVjcnVpdGVyIiwiaWF0IjoxNzkzNTQ2MjkzLCJleHAiOjE3OTQxNTEwOTN9.xSSh8Rm_ILhavnY_X6BmIjNgqRKw18Frz7mDB2GJl3o");
+      localStorage.setItem("avahire_registered_email", "salonighode@gmail.com");
+      user = JSON.stringify(demoUser);
+    } catch {
+      return <Navigate to="/login" replace />;
+    }
+  }
   return children;
 };
 

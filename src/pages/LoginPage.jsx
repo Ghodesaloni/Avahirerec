@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { Eye, EyeOff, Lock, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Lock, Loader2, Sparkles } from "lucide-react";
 import AvaHireLogo from "@/components/AvaHireLogo";
 import GoogleAccountChooserModal from "@/components/GoogleAccountChooserModal";
 import { toast } from "sonner";
@@ -268,6 +268,69 @@ const Login = () => {
               )}
               <span>Login with Google</span>
             </button>
+
+            <div className="pt-2 border-t border-slate-100 space-y-2">
+              <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center">
+                Quick 1-Click Recruiter Demo Access
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  data-testid="demo-login-saloni"
+                  onClick={async () => {
+                    setForm({ email: "salonighode@gmail.com", password: "Password123!", remember: true });
+                    setLoading(true);
+                    try {
+                      const res = await authApi.login({ email: "salonighode@gmail.com", password: "Password123!" });
+                      if (res && res.success) {
+                        const userData = res.data || { name: "Saloni Ghode", email: "salonighode@gmail.com", role: "recruiter" };
+                        localStorage.setItem("avahire_user", JSON.stringify(userData));
+                        localStorage.setItem("avahire_token", res.token || "token_saloni");
+                        localStorage.setItem("avahire_registered_email", "salonighode@gmail.com");
+                        toast.success("Logged in as Saloni Ghode (Lead Recruiter) 👋");
+                        setTimeout(() => navigate("/app/dashboard"), 200);
+                      }
+                    } catch (err) {
+                      toast.error("Demo login error: " + (err.message || "Failed"));
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                  className="py-2.5 px-3 bg-violet-50 hover:bg-violet-100 border border-violet-200 text-violet-700 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-violet-600" />
+                  <span>Saloni Ghode (Lead)</span>
+                </button>
+
+                <button
+                  type="button"
+                  data-testid="demo-login-admin"
+                  onClick={async () => {
+                    setForm({ email: "admin@avahire.ai", password: "Password123!", remember: true });
+                    setLoading(true);
+                    try {
+                      const res = await authApi.login({ email: "admin@avahire.ai", password: "Password123!" });
+                      if (res && res.success) {
+                        const userData = res.data || { name: "AvaHire Admin", email: "admin@avahire.ai", role: "recruiter" };
+                        localStorage.setItem("avahire_user", JSON.stringify(userData));
+                        localStorage.setItem("avahire_token", res.token || "token_admin");
+                        localStorage.setItem("avahire_registered_email", "admin@avahire.ai");
+                        toast.success("Logged in as AvaHire Admin 👋");
+                        setTimeout(() => navigate("/app/dashboard"), 200);
+                      }
+                    } catch (err) {
+                      toast.error("Demo login error: " + (err.message || "Failed"));
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                  className="py-2.5 px-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Lock className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Admin Recruiter</span>
+                </button>
+              </div>
+            </div>
 
             <div className="text-center text-sm text-slate-600">
               Don't have an account? <Link to="/register" className="text-violet-600 font-semibold hover:underline">Register</Link>

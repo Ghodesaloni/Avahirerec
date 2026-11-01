@@ -857,6 +857,40 @@ const CandidateLiveRoom = () => {
         };
     }, [code]);
 
+    const startBrowserInterviewMode = async () => {
+        setConnectionStatus("connected");
+        setConnectionError(null);
+        setCurrentCaption("Welcome! I am Ava, your AI interviewer. Let's begin your technical evaluation.");
+        setIsAITalking(true);
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            if (candidateVideoRef.current) {
+                candidateVideoRef.current.srcObject = stream;
+                candidateVideoRef.current.play().catch(() => {});
+                setHasCandidateVideo(true);
+            }
+        } catch (e) {
+            console.warn("Direct media capture notice:", e);
+        }
+
+        toast.success("Interactive AI Interviewer started in Browser Mode!");
+        setTimeout(() => {
+            setIsAITalking(false);
+            setTranscripts(prev => [
+                ...prev,
+                {
+                    id: `msg-${Date.now()}`,
+                    speaker: "Ava",
+                    roleTag: "AI Interviewer",
+                    time: "00:01",
+                    text: "Welcome! Could you please introduce yourself and walk us through your most significant technical architecture?"
+                }
+            ]);
+            setCurrentCaption("Welcome! Could you please introduce yourself and walk us through your most significant technical architecture?");
+        }, 2500);
+    };
+
     // Local Video Attachment Effect
     useEffect(() => {
         if (roomRef.current && isCameraOn && connectionStatus === "connected" && roomRef.current.state === ConnectionState.Connected) {
@@ -1562,12 +1596,21 @@ const CandidateLiveRoom = () => {
                                     <p className="text-xs text-rose-300 bg-rose-950/50 border border-rose-500/40 px-4 py-2 rounded-xl">
                                         {connectionError || "Connection to LiveKit server failed."}
                                     </p>
-                                    <button
-                                        onClick={() => window.location.reload()}
-                                        className="px-5 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold transition shadow-lg cursor-pointer"
-                                    >
-                                        Retry Connection
-                                    </button>
+                                    <div className="flex flex-wrap items-center justify-center gap-2.5">
+                                        <button
+                                            onClick={() => window.location.reload()}
+                                            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition shadow-md cursor-pointer"
+                                        >
+                                            Retry Connection
+                                        </button>
+                                        <button
+                                            onClick={startBrowserInterviewMode}
+                                            className="px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white rounded-xl text-xs font-bold transition shadow-md cursor-pointer flex items-center gap-1.5"
+                                        >
+                                            <Sparkles className="w-3.5 h-3.5" />
+                                            <span>Start Browser AI Mode</span>
+                                        </button>
+                                    </div>
                                 </div>
                             )}
                         </div>

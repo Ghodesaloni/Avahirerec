@@ -9,6 +9,7 @@ const nav = [
     { to: "/how-it-works", label: "How It Works" },
     { to: "/about", label: "About Us" },
     { to: "/contact", label: "Contact" },
+    { to: "/i/akc123", label: "Candidate Portal" },
 ];
 
 const PublicHeader = () => {
@@ -22,7 +23,7 @@ const PublicHeader = () => {
                     <AvaHireLogo />
                 </Link>
 
-                <nav className="hidden lg:flex items-center gap-9">
+                <nav className="hidden lg:flex items-center gap-7">
                     {nav.map((n) => (
                         <NavLink
                             key={n.to}
@@ -45,18 +46,18 @@ const PublicHeader = () => {
                     <button
                         data-testid="header-login-btn"
                         onClick={() => navigate("/login")}
-                        className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-slate-200 text-slate-800 font-semibold text-sm hover:border-violet-400 hover:text-violet-600 transition-all"
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-full border border-slate-200 text-slate-800 font-semibold text-sm hover:border-violet-400 hover:text-violet-600 transition-all cursor-pointer"
                     >
                         <i className="fa-regular fa-user text-[13px]"></i>
                         Login
                     </button>
                     <button
-                        data-testid="header-register-btn"
-                        onClick={() => navigate("/register")}
-                        className="btn-primary flex items-center gap-2 px-5 py-2.5 rounded-full text-white font-semibold text-sm"
+                        data-testid="header-dashboard-btn"
+                        onClick={() => navigate("/app/dashboard")}
+                        className="btn-primary flex items-center gap-2 px-5 py-2.5 rounded-full text-white font-semibold text-sm cursor-pointer shadow-md shadow-violet-500/25"
                     >
-                        <i className="fa-solid fa-user-plus text-[13px]"></i>
-                        Register
+                        <i className="fa-solid fa-gauge text-[13px]"></i>
+                        HR Dashboard
                     </button>
                 </div>
 

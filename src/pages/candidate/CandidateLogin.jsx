@@ -100,6 +100,9 @@ const CandidateLogin = () => {
                         if (session.candidateEmail && !email) {
                             setEmail(session.candidateEmail);
                         }
+                        if (session.candidatePhone && !phone) {
+                            setPhone(session.candidatePhone);
+                        }
                     }
                 } catch (e) {
                     console.warn("Session fetch warning:", e.message);

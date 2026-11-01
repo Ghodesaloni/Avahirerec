@@ -181,16 +181,17 @@ const CandidateInterviewInvite = () => {
                 </p>
                 <div className="flex flex-col sm:flex-row items-center gap-3">
                     <button
-                        onClick={() => window.location.reload()}
-                        className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-full text-xs sm:text-sm font-semibold transition cursor-pointer shadow-md shadow-violet-500/25"
+                        onClick={() => navigate("/i/akc123")}
+                        className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-full text-xs sm:text-sm font-semibold transition cursor-pointer shadow-md shadow-violet-500/25 flex items-center gap-2"
                     >
-                        Retry Verification
+                        <Sparkles className="w-4 h-4" />
+                        <span>Launch Sample Interview (akc123)</span>
                     </button>
                     <button
-                        onClick={() => toast.info("Please contact your HR coordinator or recruiter to verify your personalized interview link.")}
+                        onClick={() => navigate("/app/dashboard")}
                         className="px-5 py-2.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-full text-xs sm:text-sm font-semibold transition cursor-pointer"
                     >
-                        Contact Recruiter
+                        HR Dashboard
                     </button>
                 </div>
             </div>
