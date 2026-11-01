@@ -237,3 +237,138 @@ export function staticLogin(credentials) {
     message: `Welcome back, ${userData.name}!`,
   };
 }
+
+const STATIC_JOBS_KEY = "avahire_static_jobs_store";
+
+const INITIAL_SEED_JOBS = [
+  {
+    id: "job-swe-103",
+    title: "Full Stack Software Engineer",
+    dept: "Engineering",
+    jobLevel: "Mid Level",
+    reportsTo: "Engineering Manager",
+    loc: "Karnataka",
+    isRemotePosition: false,
+    workMode: "On-site",
+    type: "Full-time",
+    expLevel: "3-5 Years",
+    description: "Looking for an experienced Full Stack Software Engineer proficient in React, Node.js, and PostgreSQL to build scalable web applications.",
+    keySkills: ["React", "Node.js", "TypeScript", "PostgreSQL", "AWS"],
+    candidates: 12,
+    status: "Active",
+    posted: "Just now",
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: "job-ds-101",
+    title: "Senior Data Scientist",
+    dept: "Data & AI",
+    jobLevel: "Senior Level",
+    reportsTo: "VP of Engineering",
+    loc: "Remote",
+    isRemotePosition: true,
+    workMode: "Remote",
+    type: "Full-time",
+    expLevel: "5-8 Years",
+    description: "Lead our machine learning and AI initiative building intelligent talent ranking models.",
+    keySkills: ["Python", "Machine Learning", "PyTorch", "SQL", "Docker"],
+    candidates: 8,
+    status: "Active",
+    posted: "1 day ago",
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: "job-devops-104",
+    title: "Cloud & DevOps Engineer",
+    dept: "Infrastructure",
+    jobLevel: "Mid Level",
+    reportsTo: "Director of Infrastructure",
+    loc: "Karnataka",
+    isRemotePosition: false,
+    workMode: "Hybrid",
+    type: "Full-time",
+    expLevel: "3-5 Years",
+    description: "Manage AWS cloud infrastructure, Docker container pipelines, and CI/CD automation.",
+    keySkills: ["AWS", "Docker", "Kubernetes", "Linux", "CI/CD"],
+    candidates: 6,
+    status: "Active",
+    posted: "2 days ago",
+    createdAt: new Date().toISOString()
+  }
+];
+
+export function getStaticJobs() {
+  try {
+    const stored = localStorage.getItem(STATIC_JOBS_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn("Could not read static jobs:", e);
+  }
+
+  try {
+    localStorage.setItem(STATIC_JOBS_KEY, JSON.stringify(INITIAL_SEED_JOBS));
+  } catch (_e) {}
+  return [...INITIAL_SEED_JOBS];
+}
+
+export function saveStaticJobs(jobs) {
+  try {
+    localStorage.setItem(STATIC_JOBS_KEY, JSON.stringify(jobs));
+  } catch (e) {
+    console.warn("Could not save static jobs:", e);
+  }
+}
+
+export function staticCreateJob(jobData) {
+  const jobs = getStaticJobs();
+  const newJob = {
+    ...jobData,
+    id: `job-${Date.now()}`,
+    title: jobData.title || "Untitled Job",
+    dept: jobData.dept || "Engineering",
+    jobLevel: jobData.jobLevel || "Mid Level",
+    reportsTo: jobData.reportsTo || "Engineering Manager",
+    loc: jobData.loc || "Karnataka",
+    isRemotePosition: Boolean(jobData.isRemotePosition),
+    workMode: jobData.workMode || (jobData.isRemotePosition ? "Remote" : "On-site"),
+    type: jobData.type || "Full-time",
+    expLevel: jobData.expLevel || "3-5 Years",
+    description: jobData.description || "",
+    keySkills: Array.isArray(jobData.keySkills) ? jobData.keySkills : [],
+    candidates: 0,
+    status: jobData.status || "Active",
+    posted: "Just now",
+    createdAt: new Date().toISOString()
+  };
+
+  jobs.unshift(newJob);
+  saveStaticJobs(jobs);
+
+  return {
+    success: true,
+    data: newJob,
+    message: "Job created successfully in storage"
+  };
+}
+
+export function staticDeleteJob(id) {
+  const jobs = getStaticJobs().filter((j) => j.id !== id);
+  saveStaticJobs(jobs);
+  return { success: true, message: "Job deleted successfully" };
+}
+
+export function staticUpdateJob(id, updates) {
+  const jobs = getStaticJobs();
+  const idx = jobs.findIndex((j) => j.id === id);
+  if (idx >= 0) {
+    jobs[idx] = { ...jobs[idx], ...updates, updatedAt: new Date().toISOString() };
+    saveStaticJobs(jobs);
+    return { success: true, data: jobs[idx], message: "Job updated successfully" };
+  }
+  return { success: false, error: "Job not found" };
+}

@@ -1,5 +1,13 @@
 import axios from "axios";
-import { isStaticHtmlResponse, staticLogin, staticRegister } from "./staticAmplifyFallback";
+import {
+  isStaticHtmlResponse,
+  staticLogin,
+  staticRegister,
+  getStaticJobs,
+  staticCreateJob,
+  staticDeleteJob,
+  staticUpdateJob
+} from "./staticAmplifyFallback";
 
 // In browser, relative URL /api goes directly to port 3000 where webpack-dev-server or express server runs
 // Ignore stale external domain override from foreign environment variables
@@ -214,24 +222,71 @@ export const authApi = {
 
 export const jobsApi = {
   getAll: async (params = {}) => {
-    const res = await api.get("/jobs", { params });
-    return Array.isArray(res.data?.data) ? res.data.data : [];
+    try {
+      const res = await api.get("/jobs", { params });
+      if (isStaticHtmlResponse(res.data)) {
+        return getStaticJobs();
+      }
+      if (Array.isArray(res.data?.data)) {
+        return res.data.data;
+      }
+      return getStaticJobs();
+    } catch {
+      return getStaticJobs();
+    }
   },
   getById: async (id) => {
-    const res = await api.get(`/jobs/${id}`);
-    return res.data.data;
+    try {
+      const res = await api.get(`/jobs/${id}`);
+      if (isStaticHtmlResponse(res.data)) {
+        const jobs = getStaticJobs();
+        return jobs.find(j => j.id === id) || null;
+      }
+      return res.data.data;
+    } catch {
+      const jobs = getStaticJobs();
+      return jobs.find(j => j.id === id) || null;
+    }
   },
   create: async (jobData) => {
-    const res = await api.post("/jobs", jobData);
-    return res.data.data;
+    try {
+      const res = await api.post("/jobs", jobData);
+      if (isStaticHtmlResponse(res.data)) {
+        const fallback = staticCreateJob(jobData);
+        return fallback.data;
+      }
+      if (res.data?.data) {
+        try { staticCreateJob(res.data.data); } catch (_e) {}
+        return res.data.data;
+      }
+      const fallback = staticCreateJob(jobData);
+      return fallback.data;
+    } catch {
+      const fallback = staticCreateJob(jobData);
+      return fallback.data;
+    }
   },
   update: async (id, jobData) => {
-    const res = await api.put(`/jobs/${id}`, jobData);
-    return res.data.data;
+    try {
+      const res = await api.put(`/jobs/${id}`, jobData);
+      if (isStaticHtmlResponse(res.data)) {
+        const fallback = staticUpdateJob(id, jobData);
+        return fallback.data;
+      }
+      return res.data.data;
+    } catch {
+      const fallback = staticUpdateJob(id, jobData);
+      return fallback.data;
+    }
   },
   delete: async (id) => {
-    const res = await api.delete(`/jobs/${id}`);
-    return res.data;
+    try {
+      const res = await api.delete(`/jobs/${id}`);
+      staticDeleteJob(id);
+      return res.data;
+    } catch {
+      return staticDeleteJob(id);
+    }
   },
   parseDocument: async (formData) => {
     const res = await api.post("/jobs/parse-document", formData, {

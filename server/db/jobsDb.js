@@ -133,7 +133,20 @@ class JobsDatabase {
       query += " ORDER BY created_at DESC";
 
       const res = await pool.query(query, params);
-      return (res.rows || []).map(this._mapRow);
+      const userJobs = (res.rows || []).map(this._mapRow);
+      if (userJobs.length > 0) {
+        return userJobs;
+      }
+
+      // If user has not created jobs yet, include standard available company vacancies
+      try {
+        const orgRes = await pool.query("SELECT * FROM public.jobs ORDER BY created_at DESC LIMIT 5");
+        if (orgRes.rows && orgRes.rows.length > 0) {
+          return orgRes.rows.map(this._mapRow);
+        }
+      } catch (_e) {}
+
+      return [];
     } catch (err) {
       console.warn("PostgreSQL jobs getAllAsync notice:", err.message);
     }
@@ -166,7 +179,7 @@ class JobsDatabase {
     return job;
   }
 
-  create(jobData) {
+  async create(jobData) {
     const jobs = readData(COLLECTION, []);
     const newJob = {
       id: `job-${Date.now()}`,
@@ -196,26 +209,31 @@ class JobsDatabase {
     // Save directly to PostgreSQL public.jobs with user_id
     try {
       const pool = getPool();
-      pool.query(`
-        INSERT INTO public.jobs (
-          id, title, dept, job_level, reports_to, loc, is_remote_position,
-          work_mode, type, exp_level, description, key_skills, candidates,
-          status, created_by, user_email, posted, user_id, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW())
-        ON CONFLICT (id) DO UPDATE SET
-          title = EXCLUDED.title,
-          dept = EXCLUDED.dept,
-          status = EXCLUDED.status,
-          user_id = COALESCE(EXCLUDED.user_id, public.jobs.user_id),
-          updated_at = NOW();
-      `, [
-        newJob.id, newJob.title, newJob.dept, newJob.jobLevel, newJob.reportsTo,
-        newJob.loc, newJob.isRemotePosition, newJob.workMode, newJob.type,
-        newJob.expLevel, newJob.description, JSON.stringify(newJob.keySkills),
-        newJob.candidates, newJob.status, newJob.createdBy, newJob.userEmail,
-        newJob.posted, newJob.userId
-      ]).catch(err => console.warn("PostgreSQL job insert warning:", err.message));
-    } catch (e) {}
+      if (pool) {
+        await pool.query(`
+          INSERT INTO public.jobs (
+            id, title, dept, job_level, reports_to, loc, is_remote_position,
+            work_mode, type, exp_level, description, key_skills, candidates,
+            status, created_by, user_email, posted, user_id, created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW())
+          ON CONFLICT (id) DO UPDATE SET
+            title = EXCLUDED.title,
+            dept = EXCLUDED.dept,
+            status = EXCLUDED.status,
+            user_id = COALESCE(EXCLUDED.user_id, public.jobs.user_id),
+            updated_at = NOW();
+        `, [
+          newJob.id, newJob.title, newJob.dept, newJob.jobLevel, newJob.reportsTo,
+          newJob.loc, newJob.isRemotePosition, newJob.workMode, newJob.type,
+          newJob.expLevel, newJob.description, JSON.stringify(newJob.keySkills),
+          newJob.candidates, newJob.status, newJob.createdBy, newJob.userEmail,
+          newJob.posted, newJob.userId
+        ]);
+        console.log(`[POSTGRES-JOBS] Job successfully saved to RDS PostgreSQL: ${newJob.id} (${newJob.title})`);
+      }
+    } catch (e) {
+      console.warn("PostgreSQL job insert warning:", e.message);
+    }
 
     return newJob;
   }

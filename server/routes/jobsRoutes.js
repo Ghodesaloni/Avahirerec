@@ -282,14 +282,14 @@ router.get("/:id", requireAuth, async (req, res) => {
 });
 
 // POST /api/jobs - create new job associated with authenticated account
-router.post("/", requireAuth, (req, res) => {
+router.post("/", requireAuth, async (req, res) => {
   try {
     const { title, dept, jobLevel, reportsTo, loc, isRemotePosition, workMode, type, expLevel, description, keySkills, status } = req.body;
     if (!title) {
       return res.status(400).json({ success: false, error: "Job title is required" });
     }
 
-    const newJob = jobsDb.create({
+    const newJob = await jobsDb.create({
       title,
       dept,
       jobLevel,
