@@ -47,11 +47,19 @@ app.get("/api/db-status", (req, res) => {
 // Mount API routes
 app.use("/api", apiRouter);
 
-// Serve static frontend build in production
-const distPath = path.resolve(__dirname, "../dist");
+// Serve static frontend build in production (supporting both dist and build directories across any AWS runtime)
+const candidateDirs = [
+  path.resolve(__dirname, "../dist"),
+  path.resolve(__dirname, "../build"),
+  path.resolve(process.cwd(), "dist"),
+  path.resolve(process.cwd(), "build"),
+];
 const fs = require("fs");
-if (fs.existsSync(distPath)) {
-  app.use(express.static(distPath));
+const staticDir = candidateDirs.find((d) => fs.existsSync(path.join(d, "index.html")));
+
+if (staticDir) {
+  console.log(`[AWS SERVER] Serving static production build from: ${staticDir}`);
+  app.use(express.static(staticDir));
 }
 
 // Fallback for React Router SPA routes
@@ -59,9 +67,11 @@ app.get("*", (req, res) => {
   if (req.path.startsWith("/api")) {
     return res.status(404).json({ error: "Endpoint not found" });
   }
-  const indexPath = path.join(distPath, "index.html");
-  if (fs.existsSync(indexPath)) {
-    return res.sendFile(indexPath);
+  if (staticDir) {
+    const indexPath = path.join(staticDir, "index.html");
+    if (fs.existsSync(indexPath)) {
+      return res.sendFile(indexPath);
+    }
   }
   return res.status(200).send(`
     <!DOCTYPE html>

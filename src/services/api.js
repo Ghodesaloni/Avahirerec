@@ -2,14 +2,16 @@ import axios from "axios";
 
 // In browser, relative URL /api goes directly to port 3000 where webpack-dev-server or express server runs
 // Ignore stale external domain override from foreign environment variables
+// Determine backend API URL: supports separate frontend/backend deployments (AWS Amplify + App Runner/EC2)
+// or unified single-domain fullstack deployments (relative /api)
 const getApiBase = () => {
-  if (typeof window !== "undefined") {
-    // In browser, always use relative path on current host
-    return "";
-  }
-  const envUrl = process.env.REACT_APP_BACKEND_URL;
+  const envUrl =
+    process.env.REACT_APP_BACKEND_URL ||
+    process.env.REACT_APP_API_URL ||
+    (typeof window !== "undefined" && window.__BACKEND_URL__ ? window.__BACKEND_URL__ : "");
+
   if (envUrl && !envUrl.includes("preview.emergentagent.com")) {
-    return envUrl;
+    return envUrl.replace(/\/+$/, "");
   }
   return "";
 };
