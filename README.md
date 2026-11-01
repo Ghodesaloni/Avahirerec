@@ -1,32 +1,52 @@
-# React + TypeScript + Vite
+# AvaHire - AI Recruitment & Live Interviewing System
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+AvaHire is an autonomous, multimodal AI recruitment and interviewing platform. It combines deterministic 8-factor ATS resume screening, automated candidate lifecycle communications, and real-time candidate interviewing rooms featuring audio/visual anti-cheat proctoring, multi-rubric evaluation, and an HR recruiter management dashboard.
 
-Currently, two official plugins are available:
+## Key Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+### 1. Recruiter Workspace & Dashboard
+- **Executive Recruitment KPIs**: Real-time tracking of active job requisitions, candidate pipeline funnel, scheduled and completed interviews, and hire recommendations.
+- **Job Requisitions Management**: Create, edit, and filter jobs with custom departments, seniority levels, requirements, and key skills.
+- **Resume Hub & 8-Factor ATS Screening**: Upload resumes in PDF or Word (`.docx`), extract candidate entities (skills, experience, education, domain), and score alignment using deterministic rubric algorithms.
+- **Candidate Talent Pipeline**: Track candidate progression through Applied, Screening, Interview, and Selected stages with full per-account isolation.
+- **Interview Scheduling & Calendar**: Book candidate interview slots, generate secure tokenized join URLs, and configure proctoring sensitivity.
+- **Email Center**: Idempotent email triggers for shortlisting notifications, interview invitations, 1-hour reminders, and offer letters.
+- **Reports & Document Downloads**: Export candidate rosters to formatted Excel (`.xlsx`) spreadsheets and download structured interview transcripts (`.docx`).
 
-## React Compiler
+### 2. Candidate AI Interview Portal
+- **Secure Tokenized Entry**: Candidate verification against registered resume credentials (email and phone) with strict schedule window validation.
+- **Device & System Check**: Integrated camera, microphone, speaker, and network latency diagnostic checks.
+- **Interactive Instructions**: Proctoring rules, camera framing guidance, and interview format overview.
+- **Live Interview Room**:
+  - Live AI interviewer persona ("Ava") asking structured role-specific and technical questions.
+  - Real-time speech recognition and captioning.
+  - Computer vision and audio proctoring (monitoring tab switching/window blur, multiple faces, missing faces, poor lighting, and background voices).
+  - Automated rubric scoring across Technical Correctness (40%), Completeness (25%), Relevance (15%), Problem Solving (15%), and Communication Clarity (5%).
+- **Completion & Thank You**: Candidate feedback and automated scorecard submission.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Tech Stack
 
-## Expanding the Oxlint configuration
+- **Frontend**: React 19, React Router v7, Tailwind CSS, Radix UI Primitives, Lucide Icons, Recharts, Sonner Toasts
+- **Backend & Middleware**: Express.js REST API with dynamic middleware pipeline
+- **Database & Persistence**: Dual-layer architecture with PostgreSQL (ACID relational) and zero-downtime local JSON document mirror fallback
+- **Audio & Media**: Web Audio API frequency analysis, SpeechRecognition, LiveKit WebRTC
+- **AI & Evaluation**: Algorithmic 5-parameter rubric engine and Google GenAI LLM evaluation
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+## Getting Started
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+### Development
+```bash
+npm run dev
 ```
+The application will start on port `3000` at `http://0.0.0.0:3000`.
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+### Production Build
+```bash
+npm run build
+```
+Creates an optimized production bundle in the `dist/` directory.
+
+### Demo Recruiter Credentials
+- **Email**: `salonighode@gmail.com`
+- **Password**: `Password123!`
+- **Alternative Admin**: `admin@avahire.ai` / `Password123!`
