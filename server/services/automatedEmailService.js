@@ -392,8 +392,25 @@ function getAutomatedEmailLogs() {
  * Helper to construct base URL for candidate portal links
  */
 function getBaseUrl(req) {
+  if (process.env.FRONTEND_URL) return process.env.FRONTEND_URL.replace(/\/$/, "");
   if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
   if (req) {
+    const origin = req.get ? req.get("origin") : req.headers?.origin;
+    if (origin && typeof origin === "string" && !origin.includes("null")) {
+      return origin.replace(/\/$/, "");
+    }
+    const referer = req.get ? req.get("referer") : req.headers?.referer;
+    if (referer && typeof referer === "string") {
+      try {
+        const u = new URL(referer);
+        return `${u.protocol}//${u.host}`;
+      } catch (_) {}
+    }
+    const forwardedHost = req.get ? req.get("x-forwarded-host") : req.headers?.["x-forwarded-host"];
+    const forwardedProto = (req.get ? req.get("x-forwarded-proto") : req.headers?.["x-forwarded-proto"]) || (req.secure ? "https" : "http");
+    if (forwardedHost) {
+      return `${forwardedProto}://${forwardedHost}`;
+    }
     const host = req.get ? req.get("host") : (req.headers?.host || "localhost:3000");
     const protocol = req.protocol || (req.secure ? "https" : "http");
     return `${protocol}://${host}`;

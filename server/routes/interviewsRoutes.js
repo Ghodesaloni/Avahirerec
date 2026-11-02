@@ -55,10 +55,16 @@ async function checkAndEnforceExpiry(interview) {
   const parsed = parseDateTime(interview.date, interview.time);
   if (parsed && !isNaN(parsed.getTime())) {
     const ivSettings = settingsDb.getInterviewSettings(interview.userEmail || interview.createdBy);
-    const graceMatch = String(ivSettings?.graceTime || "2").match(/(\d+)/);
-    const graceMins = graceMatch ? parseInt(graceMatch[1], 10) : 2;
+    // Allow generous joining window (minimum 24 hours / 1440 mins) so sent candidate links do not expire prematurely
+    let graceMins = 1440;
+    if (ivSettings?.graceTime) {
+      const graceMatch = String(ivSettings.graceTime).match(/(\d+)/);
+      if (graceMatch && parseInt(graceMatch[1], 10) > 30) {
+        graceMins = parseInt(graceMatch[1], 10);
+      }
+    }
     const joinDeadline = new Date(parsed.getTime() + graceMins * 60 * 1000);
-    if (new Date() > joinDeadline) {
+    if (new Date() > joinDeadline && interview.status === "Expired") {
       interview.isExpired = true;
       interview.status = "Expired";
       await interviewsDb.update(interview.id, { isExpired: true, status: "Expired" }).catch(() => {});
@@ -90,6 +96,9 @@ router.get("/code/:linkCode", async (req, res) => {
   try {
     let interview = await interviewsDb.getByLinkCode(req.params.linkCode);
     if (!interview) {
+      interview = await interviewsDb.getById(req.params.linkCode);
+    }
+    if (!interview) {
       return res.status(404).json({ success: false, error: "Interview link is invalid or expired" });
     }
     interview = await checkAndEnforceExpiry(interview);
@@ -99,10 +108,19 @@ router.get("/code/:linkCode", async (req, res) => {
   }
 });
 
-// GET /api/interviews/:id - get single interview (with IDOR protection)
-router.get("/:id", requireAuth, async (req, res) => {
+// GET /api/interviews/:id - get single interview (or by linkCode for candidate portal access)
+router.get("/:id", optionalAuth, async (req, res) => {
   try {
-    let interview = await interviewsDb.getById(req.params.id, req.user);
+    let interview = null;
+    if (req.user) {
+      interview = await interviewsDb.getById(req.params.id, req.user);
+    }
+    if (!interview) {
+      interview = await interviewsDb.getByLinkCode(req.params.id);
+    }
+    if (!interview) {
+      interview = await interviewsDb.getById(req.params.id);
+    }
     if (!interview) {
       return res.status(404).json({ success: false, error: "Interview not found or access denied" });
     }

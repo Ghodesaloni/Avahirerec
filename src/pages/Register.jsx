@@ -160,10 +160,19 @@ const Register = () => {
       });
 
       // Save user info and remember registered email for seamless login
-      localStorage.setItem("avahire_registered_email", form.email.trim());
+      const cleanEmail = form.email.trim();
+      localStorage.setItem("avahire_registered_email", cleanEmail);
       if (response?.token) {
         localStorage.setItem("avahire_token", response.token);
       }
+      const savedUser = response?.user || response?.data || {
+        name: form.fullName.trim(),
+        email: cleanEmail,
+        company: form.company.trim() || "AvaHire Partner",
+        designation: form.designation.trim() || "HR Administrator",
+        role: "recruiter"
+      };
+      localStorage.setItem("avahire_user", JSON.stringify(savedUser));
 
       setRegisteredSuccess(true);
       toast.success("Successfully registered! Your HR account is active and ready.");
@@ -238,8 +247,13 @@ const Register = () => {
     navigate("/login", {
       state: {
         email: form.email.trim(),
+        password: form.password,
       },
     });
+  };
+
+  const proceedToDashboard = () => {
+    navigate("/app/dashboard");
   };
 
   return (
@@ -280,12 +294,20 @@ const Register = () => {
               <div className="mt-8 space-y-3">
                 <button
                   type="button"
-                  data-testid="proceed-to-login-btn"
-                  onClick={proceedToLogin}
+                  data-testid="enter-dashboard-direct-btn"
+                  onClick={proceedToDashboard}
                   className="btn-primary w-full py-4 rounded-xl text-white font-semibold flex items-center justify-center gap-2 shadow-lg shadow-violet-500/25 cursor-pointer text-base bg-violet-600 hover:bg-violet-700"
                 >
-                  <span>Proceed to Login</span>
+                  <span>Go to HR Dashboard</span>
                   <ArrowRight size={18} />
+                </button>
+                <button
+                  type="button"
+                  data-testid="proceed-to-login-btn"
+                  onClick={proceedToLogin}
+                  className="w-full py-3.5 rounded-xl border border-slate-200 text-slate-700 font-semibold flex items-center justify-center gap-2 hover:bg-slate-50 transition cursor-pointer text-sm"
+                >
+                  <span>Proceed to Login Page</span>
                 </button>
               </div>
             </div>

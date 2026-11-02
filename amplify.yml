@@ -1,0 +1,31 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - npm install
+    build:
+      commands:
+        - npm run build
+  artifacts:
+    baseDirectory: dist
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - node_modules/**/*
+customHeaders:
+  - pattern: '**/*'
+    headers:
+      - key: 'Cache-Control'
+        value: 'max-age=0, no-cache, no-store, must-revalidate'
+rewrites:
+  - source: '</^[^.]+$|\.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|woff2|ttf|map|json)$)([^.]+$)/>'
+    target: '/index.html'
+    status: '200'
+  - source: '/i/*'
+    target: '/index.html'
+    status: '200'
+  - source: '/*'
+    target: '/index.html'
+    status: '200'

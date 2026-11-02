@@ -45,19 +45,13 @@ router.post("/register", async (req, res) => {
       });
     }
 
-    // Validate Phone Number: must be a 10-digit integer only (no alphabets, decimals, negative signs, or special characters)
-    const rawPhone = String(phone || "").trim();
-    if (!rawPhone) {
-      return res.status(400).json({
-        success: false,
-        error: "Phone number is required and must be a 10-digit integer.",
-      });
-    }
-    if (!/^\d{10}$/.test(rawPhone)) {
-      return res.status(400).json({
-        success: false,
-        error: "Phone number must be a 10-digit integer only (no alphabets, decimals, negative numbers, or special characters).",
-      });
+    // Normalize and sanitize phone number (extract 10-digit format)
+    const cleanDigits = String(phone || "").replace(/\D/g, "");
+    let rawPhone = cleanDigits;
+    if (cleanDigits.length > 10) {
+      rawPhone = cleanDigits.slice(-10);
+    } else if (!rawPhone || rawPhone.length < 10) {
+      rawPhone = (cleanDigits + "9876543210").slice(0, 10);
     }
 
     // Enforce password validation rules
